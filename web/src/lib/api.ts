@@ -1,0 +1,119 @@
+import type {
+  AdminEvent,
+  CreatedEvent,
+  EventSettings,
+  MediaItem,
+  MediaPage,
+  Me,
+  PublicEvent,
+  UploadSlot,
+} from '../../../shared/types';
+
+export const API_URL = __API_URL__;
+
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    public code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+const SESSION_KEY = 'snapwall.session';
+
+function store(): Storage | null {
+  try {
+    return localStorage;
+  } catch {
+    return null;
+  }
+}
+
+export const session = {
+  get: () => store()?.getItem(SESSION_KEY) ?? null,
+  set: (token: string) => store()?.setItem(SESSION_KEY, token),
+  clear: () => store()?.removeItem(SESSION_KEY),
+};
+
+async function request<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  if (init.json !== undefined) headers.set('Content-Type', 'application/json');
+  let res: Response;
+  try {
+    res = await fetch(API_URL + path, {
+      ...init,
+      headers,
+      body: init.json !== undefined ? JSON.stringify(init.json) : init.body,
+      referrerPolicy: 'no-referrer',
+    });
+  } catch {
+    throw new ApiError(0, 'offline', "Can't reach SnapWall. Check your connection.");
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (res.status === 401 && data.error === 'signin_required') session.clear();
+    throw new ApiError(res.status, data.error ?? 'error', data.message ?? 'Something went wrong');
+  }
+  return data as T;
+}
+
+const authed = (): HeadersInit => {
+  const s = session.get();
+  return s ? { Authorization: `Bearer ${s}` } : {};
+};
+
+export const signInUrl = () => `${API_URL}/auth/google/start`;
+
+export const owner = {
+  me: () => request<Me>('/me', { headers: authed() }),
+  logout: () => request('/auth/logout', { method: 'POST', headers: authed() }).finally(session.clear),
+  disconnect: () => request('/me', { method: 'DELETE', headers: authed() }).finally(session.clear),
+  create: (body: { name: string; date: string | null; settings: Partial<EventSettings>; pin?: string }) =>
+    request<CreatedEvent>('/events', { method: 'POST', headers: authed(), json: body }),
+};
+
+export type EventPatch = Partial<{
+  name: string;
+  date: string | null;
+  status: 'active' | 'disabled';
+  settings: Partial<EventSettings>;
+  pin: string | null;
+}>;
+
+/** Admin calls use the admin link token when present, otherwise the signed-in session. */
+export function adminApi(eventId: string, adminToken: string | null) {
+  const headers = (): HeadersInit => (adminToken ? { 'X-Admin-Token': adminToken } : authed());
+  const base = `/events/${encodeURIComponent(eventId)}`;
+  return {
+    get: () => request<AdminEvent>(base, { headers: headers() }),
+    update: (patch: EventPatch) => request<AdminEvent>(base, { method: 'PATCH', headers: headers(), json: patch }),
+    rotate: (which: 'guest' | 'admin') => request<CreatedEvent>(`${base}/rotate`, { method: 'POST', headers: headers(), json: { which } }),
+    remove: (trashFolder: boolean) => request(`${base}${trashFolder ? '?trash=1' : ''}`, { method: 'DELETE', headers: headers() }),
+    media: (cursor?: string | null) =>
+      request<MediaPage>(`${base}/media${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, { headers: headers() }),
+    setHidden: (id: string, hidden: boolean) =>
+      request<MediaItem>(`${base}/media/${id}`, { method: 'PATCH', headers: headers(), json: { hidden } }),
+    removeMedia: (id: string) => request(`${base}/media/${id}`, { method: 'DELETE', headers: headers() }),
+  };
+}
+
+export function guestApi(token: string, pin: () => string | null) {
+  const headers = (): HeadersInit => {
+    const p = pin();
+    return p ? { 'X-Event-Pin': p } : {};
+  };
+  const base = `/g/${encodeURIComponent(token)}`;
+  return {
+    event: () => request<PublicEvent>(base, { headers: headers() }),
+    media: (cursor?: string | null) =>
+      request<MediaPage>(`${base}/media${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, { headers: headers() }),
+    startUpload: (body: { name: string; size: number; mime: string; uploader: string | null }) =>
+      request<UploadSlot>(`${base}/uploads`, { method: 'POST', headers: headers(), json: body }),
+    completeUpload: (uploadId: string, fileId: string) =>
+      request<MediaItem>(`${base}/uploads/${uploadId}/complete`, { method: 'POST', headers: headers(), json: { fileId } }),
+  };
+}
+
+export type GuestApi = ReturnType<typeof guestApi>;

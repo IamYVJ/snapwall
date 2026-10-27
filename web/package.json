@@ -1,0 +1,26 @@
+{
+  "name": "snapwall-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource/instrument-serif": "^5.3.0",
+    "client-zip": "^2.5.1",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@tsconfig/svelte": "^5.0.8",
+    "@types/qrcode": "^1.5.6",
+    "svelte": "^5.57.3",
+    "svelte-check": "^4.7.7",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.5"
+  }
+}
