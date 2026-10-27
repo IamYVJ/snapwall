@@ -14,7 +14,8 @@ WEB_BASE_URL = "https://iamyvj.github.io/snapwall/"
 [[d1_databases]]
 binding = "DB"
 database_name = "snapwall"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+# Filled in at deploy time from D1_DATABASE_ID (CI) or api/.d1-id (local) by scripts/wrangler.mjs
+database_id = "__D1_DATABASE_ID__"
 migrations_dir = "migrations"
 
 [triggers]

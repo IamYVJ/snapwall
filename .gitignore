@@ -12,3 +12,7 @@ dist/
 *.local.md
 .dev.vars.example
 .env.example
+
+# Real Cloudflare D1 ID stays local; CI uses the D1_DATABASE_ID secret
+api/.d1-id
+api/.wrangler.deploy.toml
