@@ -1,5 +1,6 @@
 <script lang="ts">
   import { router } from './lib/router.svelte';
+  import { setVisitorFootnote } from './lib/visitorCount';
   import Admin from './routes/Admin.svelte';
   import Auth from './routes/Auth.svelte';
   import Home from './routes/Home.svelte';
@@ -12,6 +13,10 @@
 
   const parts = $derived(router.parts);
   const key = $derived(parts.join('/'));
+
+  // Event pages (guest wall, admin, slideshow) hide the footnote: a site-wide count would confuse guests.
+  const PRIVATE = new Set(['auth', 'new', 'manage', 'a', 'e']);
+  $effect(() => setVisitorFootnote(!PRIVATE.has(parts[0] ?? '')));
 </script>
 
 {#key key}

@@ -18,8 +18,16 @@
   <h2 class="h2">What we never store</h2>
   <ul>
     <li>Photos, videos or thumbnails. Uploads go straight from the guest’s device to the host’s Google Drive.</li>
-    <li>Analytics, ads or third-party trackers. There are none.</li>
+    <li>Cookies, ads or third-party trackers. There are none.</li>
   </ul>
+
+  <h2 class="h2">Visitor counts</h2>
+  <p>
+    SnapWall counts page loads with <a href="https://www.goatcounter.com/" target="_blank" rel="noreferrer">GoatCounter</a>, a privacy-friendly
+    analytics service that uses no cookies and doesn't keep IP addresses. It receives the page address (<code>/snapwall/</code>), the referring
+    site, the browser and screen size, and the rough location derived from the IP address. It never receives event names, photos or the
+    links themselves: everything after the <code>#</code> in a SnapWall link stays in your browser. Blocking GoatCounter doesn't affect SnapWall.
+  </p>
 
   <h2 class="h2">Google Drive access</h2>
   <p>

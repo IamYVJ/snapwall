@@ -22,6 +22,7 @@ GitHub Pages (web/)  ──JSON──▶  Cloudflare Worker + D1 (api/)  ──D
 | Tokens at rest | Google refresh/access tokens and guest tokens are AES-GCM encrypted with `TOKEN_KEY`. |
 | Location data | GPS/EXIF/XMP/IPTC is stripped from JPEG and PNG in the browser before upload (lossless, orientation kept). |
 | Abuse | Per-event, per-IP rate limits (the IP is kept only as a salted hash), type allowlist (no SVG/HTML), size limits, optional PIN, optional approval queue. |
+| Analytics | Page loads are counted with GoatCounter (no cookies, no IP addresses kept). Only the path `/snapwall/` and a fixed title are sent; event names and link tokens never leave the browser. |
 | Removal | Disable an event (links show "closed"), delete it (optionally trashing the Drive folder), or disconnect Google, which revokes access and erases the account. |
 
 ## Known limits

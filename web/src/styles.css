@@ -416,6 +416,27 @@ em.serif {
   }
 }
 
+/* ---------- Visitor footnote ---------- */
+
+.site-foot {
+  padding: 0 var(--gutter) max(24px, env(safe-area-inset-bottom));
+}
+
+/* No `display` on .visitor-counter: it would override the `hidden` attribute
+   and show a bare "— visitors" to anyone whose adblocker blocks GoatCounter. */
+.visitor-counter {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--faint);
+  text-align: center;
+}
+
+.visitor-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
 .sr-only {
   position: absolute;
   width: 1px;

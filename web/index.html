@@ -6,7 +6,7 @@
     <meta name="referrer" content="no-referrer" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob: __API_ORIGIN__; media-src blob: __API_ORIGIN__; connect-src 'self' __API_ORIGIN__ https://www.googleapis.com; object-src 'none'; base-uri 'self'; form-action 'self'"
+      content="default-src 'self'; script-src 'self' https://gc.zgo.at; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob: __API_ORIGIN__ https://yvj.goatcounter.com; media-src blob: __API_ORIGIN__; connect-src 'self' __API_ORIGIN__ https://www.googleapis.com https://yvj.goatcounter.com; object-src 'none'; base-uri 'self'; form-action 'self'"
     />
     <meta name="description" content="SnapWall — collect every photo and video from your event, straight into your own Google Drive." />
     <meta name="theme-color" content="#faf9f7" media="(prefers-color-scheme: light)" />
@@ -16,6 +16,20 @@
   </head>
   <body>
     <div id="app"></div>
+    <!-- Outside #app so Svelte never re-renders it; App.svelte shows it on public pages only. -->
+    <footer class="site-foot">
+      <p class="visitor-counter" hidden>
+        <span id="visitor-count" class="visitor-count">—</span> visitors
+      </p>
+    </footer>
     <script type="module" src="/src/main.ts"></script>
+    <!-- GoatCounter pageview beacon. One site shared across all projects on purpose:
+         counts are per-path, so each project is separated by its own pathname.
+         The title is fixed because guest and admin pages put private event names in it. -->
+    <script
+      data-goatcounter="https://yvj.goatcounter.com/count"
+      data-goatcounter-settings='{"title": "SnapWall"}'
+      async
+      src="https://gc.zgo.at/count.js"></script>
   </body>
 </html>
