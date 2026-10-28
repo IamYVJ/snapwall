@@ -34,4 +34,9 @@ export function saveBlob(blob: Blob, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
+/** "250 MB", "1.5 GB" from megabytes. */
+export function sizeLabel(mb: number): string {
+  return mb >= 1000 ? `${+(mb / 1000).toFixed(1)} GB` : `${Math.max(0, Math.floor(mb))} MB`;
+}
+
 export const isVideo = (mime: string) => mime.startsWith('video/');

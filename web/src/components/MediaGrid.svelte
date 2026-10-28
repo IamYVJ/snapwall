@@ -11,6 +11,7 @@
     selected = new Set<string>(),
     ontoggle,
     actions,
+    names = false,
   }: {
     items: MediaItem[];
     onopen: (index: number) => void;
@@ -18,6 +19,8 @@
     selected?: Set<string>;
     ontoggle?: (id: string) => void;
     actions?: Snippet<[MediaItem]>;
+    /** Show each upload's guest name on its tile. */
+    names?: boolean;
   } = $props();
 
   let failed = $state<Record<string, boolean>>({});
@@ -41,6 +44,9 @@
         {/if}
         {#if isVideo(item.mime) && !failed[item.id]}
           <span class="badge"><Icon name="play" size={14} /></span>
+        {/if}
+        {#if names && item.uploader}
+          <span class="who">{item.uploader}</span>
         {/if}
         {#if selecting}
           <span class="check" aria-hidden="true">{#if selected.has(item.id)}<Icon name="check" size={16} stroke={2.4} />{/if}</span>
@@ -130,6 +136,25 @@
     background: rgba(0, 0, 0, 0.55);
     color: #fff;
     backdrop-filter: blur(4px);
+  }
+  .who {
+    position: absolute;
+    inset: auto 0 0 0;
+    padding: 22px 44px 7px 9px;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.55));
+    color: #fff;
+    font-size: 12px;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+  }
+  @media (min-width: 640px) {
+    .who {
+      font-size: 13px;
+      padding: 28px 46px 9px 11px;
+    }
   }
   .check {
     position: absolute;

@@ -4,7 +4,7 @@ import { IMAGE_TYPES, VIDEO_TYPES, type EventSettings, type PublicEvent, type Up
 import { randomToken, sha256 } from './crypto';
 import { pinHash } from './events';
 import { driveFor } from './google';
-import { listMedia, toMediaItem } from './media';
+import { listGuests, listMedia, toMediaItem } from './media';
 import {
   HttpError,
   bumpMedia,
@@ -41,6 +41,36 @@ function requireUploads(settings: EventSettings) {
   if (!uploadsAccepting(settings)) throw new HttpError(403, 'uploads_closed', 'Uploads are closed for this event');
 }
 
+/**
+ * Identifies a guest for per-guest limits: the random device ID the web app sends, or the IP for clients that
+ * send none. Hashed with a secret, per event, so it can't be linked across events or back to the device.
+ */
+async function guestKey(c: Ctx, event: EventRow, ipHash: string): Promise<string> {
+  const id = c.req.header('X-Guest-Id');
+  if (!id || !/^[\w-]{16,64}$/.test(id)) return ipHash;
+  return sha256(`guest:${id}:${event.id}:${c.env.SIGNING_KEY}`);
+}
+
+const ipHashOf = (c: Ctx, event: EventRow) => sha256(`${c.req.header('CF-Connecting-IP') ?? ''}:${event.id}:${c.env.SIGNING_KEY}`);
+
+const hasLimits = (s: EventSettings) => s.guestMaxFiles !== null || s.guestMaxMB !== null;
+
+/** Files and bytes a guest has used: finished uploads, plus ones started in the last day that may still finish. */
+async function usageOf(db: D1Database, eventId: string, key: string) {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS files, COALESCE(SUM(size), 0) AS bytes FROM uploads
+       WHERE event_id = ? AND guest_hash = ? AND (status = 'done' OR created_at > ?)`,
+    )
+    .bind(eventId, key, now() - 86400)
+    .first<{ files: number; bytes: number }>();
+  return { files: row?.files ?? 0, bytes: row?.bytes ?? 0 };
+}
+
+function mbLabel(mb: number): string {
+  return mb >= 1000 ? `${+(mb / 1000).toFixed(1)} GB` : `${mb} MB`;
+}
+
 function driveName(name: string): string {
   return (cleanText(name, 150) ?? 'upload').replace(/[\\/:*?"<>|]/g, '_');
 }
@@ -52,6 +82,7 @@ guest.get('/:token', async (c) => {
   const row = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM uploads WHERE event_id = ? AND status = 'done' AND hidden = 0`)
     .bind(event.id)
     .first<{ n: number }>();
+  const usage = hasLimits(settings) ? await usageOf(c.env.DB, event.id, await guestKey(c, event, await ipHashOf(c, event))) : null;
   const body: PublicEvent = {
     id: event.id,
     name: event.name,
@@ -66,7 +97,10 @@ guest.get('/:token', async (c) => {
       requireName: settings.requireName,
       stripLocation: settings.stripLocation,
       moderation: settings.moderation,
+      guestMaxFiles: settings.guestMaxFiles,
+      guestMaxMB: settings.guestMaxMB,
     },
+    usage,
   };
   return c.json(body);
 });
@@ -75,6 +109,12 @@ guest.get('/:token/media', async (c) => {
   const { event, settings } = await guestEvent(c);
   if (!settings.guestView) throw new HttpError(403, 'view_disabled', 'The host has made this an upload-only event');
   return c.json(await listMedia(c, event, 'g', settings));
+});
+
+guest.get('/:token/guests', async (c) => {
+  const { event, settings } = await guestEvent(c);
+  if (!settings.guestView) throw new HttpError(403, 'view_disabled', 'The host has made this an upload-only event');
+  return c.json(await listGuests(c, event, 'g'));
 });
 
 // A free Worker request may run 50 D1 queries, so each stream checks for a minute and the client reconnects.
@@ -127,12 +167,23 @@ guest.post('/:token/uploads', async (c) => {
 
   const db = c.env.DB;
   // IPs are only kept as a salted, per-event hash for rate limiting.
-  const ipHash = await sha256(`${c.req.header('CF-Connecting-IP') ?? ''}:${event.id}:${c.env.SIGNING_KEY}`);
+  const ipHash = await ipHashOf(c, event);
   const recent = await db
     .prepare('SELECT COUNT(*) AS n FROM uploads WHERE event_id = ? AND ip_hash = ? AND created_at > ?')
     .bind(event.id, ipHash, now() - RATE_WINDOW)
     .first<{ n: number }>();
   if ((recent?.n ?? 0) >= RATE_MAX) throw new HttpError(429, 'rate_limited', 'Too many uploads, please wait a few minutes');
+
+  const guestHash = await guestKey(c, event, ipHash);
+  if (hasLimits(settings)) {
+    const used = await usageOf(db, event.id, guestHash);
+    if (settings.guestMaxFiles !== null && used.files >= settings.guestMaxFiles) {
+      throw new HttpError(403, 'guest_limit', `You’ve reached the limit of ${settings.guestMaxFiles} files per guest`);
+    }
+    if (settings.guestMaxMB !== null && used.bytes + size > settings.guestMaxMB * 1024 * 1024) {
+      throw new HttpError(403, 'guest_limit', `This would go over the ${mbLabel(settings.guestMaxMB)} limit per guest`);
+    }
+  }
 
   const owner = await db.prepare('SELECT * FROM owners WHERE id = ?').bind(event.owner_id).first<OwnerRow>();
   if (!owner) throw new HttpError(404, 'event_not_found');
@@ -153,10 +204,10 @@ guest.post('/:token/uploads', async (c) => {
 
   await db
     .prepare(
-      `INSERT INTO uploads (id, event_id, name, mime, size, uploader, status, hidden, ip_hash, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)`,
+      `INSERT INTO uploads (id, event_id, name, mime, size, uploader, status, hidden, ip_hash, guest_hash, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)`,
     )
-    .bind(uploadId, event.id, name, mime, size, uploader, ipHash, now())
+    .bind(uploadId, event.id, name, mime, size, uploader, ipHash, guestHash, now())
     .run();
 
   const slot: UploadSlot = { uploadId, uploadUrl };

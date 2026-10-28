@@ -12,7 +12,7 @@ app.use('*', (c, next) => {
   const allowed = c.env.ALLOWED_ORIGINS.split(',').map((s) => s.trim());
   return cors({
     origin: (origin) => (allowed.includes(origin) ? origin : null),
-    allowHeaders: ['Authorization', 'Content-Type', 'X-Admin-Token', 'X-Event-Pin'],
+    allowHeaders: ['Authorization', 'Content-Type', 'X-Admin-Token', 'X-Event-Pin', 'X-Guest-Id'],
     allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     exposeHeaders: ['Content-Length', 'Content-Range', 'Content-Disposition'],
     maxAge: 600,

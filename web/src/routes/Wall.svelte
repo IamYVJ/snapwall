@@ -1,13 +1,14 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import type { MediaItem, PublicEvent } from '../../../shared/types';
+  import type { GuestCount, MediaItem, PublicEvent } from '../../../shared/types';
   import { IMAGE_TYPES, VIDEO_TYPES } from '../../../shared/types';
+  import GuestFilter from '../components/GuestFilter.svelte';
   import Icon from '../components/Icon.svelte';
   import Lightbox from '../components/Lightbox.svelte';
   import MediaGrid from '../components/MediaGrid.svelte';
   import Modal from '../components/Modal.svelte';
   import { ApiError, guestApi } from '../lib/api';
-  import { formatDate, plural } from '../lib/format';
+  import { formatDate, plural, sizeLabel } from '../lib/format';
   import { eventManifest, install } from '../lib/install.svelte';
   import { href } from '../lib/router.svelte';
   import { mimeOf, uploadFile } from '../lib/upload';
@@ -52,6 +53,8 @@
   let next = $state<string | null>(null);
   let loadingMore = $state(false);
   let open = $state<number | null>(null);
+  let guests = $state<GuestCount[]>([]);
+  let by = $state<string | null>(null);
 
   let jobs = $state<Job[]>([]);
   let sheetOpen = $state(false);
@@ -77,6 +80,20 @@
   });
   let sentinel = $state<HTMLElement>();
 
+  // Per-guest limits: what the server counted at load, plus everything queued or sent from this page since.
+  const limits = $derived.by(() => {
+    if (!event?.usage) return null;
+    const mine = jobs.filter((j) => j.status !== 'error');
+    return {
+      files: event.settings.guestMaxFiles === null ? null : event.settings.guestMaxFiles - event.usage.files - mine.length,
+      bytes:
+        event.settings.guestMaxMB === null
+          ? null
+          : event.settings.guestMaxMB * 1024 * 1024 - event.usage.bytes - mine.reduce((s, j) => s + j.file.size, 0),
+    };
+  });
+  const atLimit = $derived(!!limits && ((limits.files !== null && limits.files <= 0) || (limits.bytes !== null && limits.bytes <= 0)));
+
   const accept = $derived(event?.settings.allowVideo ? 'image/*,video/*' : 'image/*');
   const doneCount = $derived(jobs.filter((j) => j.status === 'done').length);
   const busyCount = $derived(jobs.filter((j) => j.status === 'waiting' || j.status === 'uploading').length);
@@ -87,9 +104,10 @@
       event = await api.event();
       phase = 'ready';
       if (event.settings.guestView) {
-        const page = await api.media();
+        const [page, g] = await Promise.all([api.media(), api.guests().catch(() => [])]);
         items = page.items;
         next = page.next;
+        guests = g;
         poll = setInterval(refresh, 20_000);
       }
     } catch (err) {
@@ -107,7 +125,10 @@
   async function refresh() {
     if (document.hidden || !event?.settings.guestView) return;
     try {
-      const page = await api.media();
+      const want = by;
+      const [page, g] = await Promise.all([api.media(null, want), api.guests().catch(() => guests)]);
+      guests = g;
+      if (by !== want) return;
       const known = new Set(items.map((i) => i.id));
       const fresh = page.items.filter((i) => !known.has(i.id));
       if (!next) {
@@ -130,11 +151,27 @@
     if (!next || loadingMore) return;
     loadingMore = true;
     try {
-      const page = await api.media(next);
+      const want = by;
+      const page = await api.media(next, want);
+      if (by !== want) return;
       items = [...items, ...page.items.filter((i) => !items.some((x) => x.id === i.id))];
       next = page.next;
     } finally {
       loadingMore = false;
+    }
+  }
+
+  async function showGuest(name: string | null) {
+    by = name;
+    items = [];
+    next = null;
+    try {
+      const page = await api.media(null, name);
+      if (by !== name) return;
+      items = page.items;
+      next = page.next;
+    } catch {
+      /* the next refresh tries again */
     }
   }
 
@@ -178,7 +215,14 @@
     for (const file of pendingFiles) {
       const mime = mimeOf(file);
       const job: Job = { key: ++jobKey, file, status: 'waiting', progress: 0 };
-      if (!allowed.includes(mime)) {
+      const left = limits;
+      if (left?.files !== null && left?.files !== undefined && left.files <= 0) {
+        job.status = 'error';
+        job.error = `Over the limit of ${s.guestMaxFiles} files`;
+      } else if (left?.bytes !== null && left?.bytes !== undefined && file.size > left.bytes) {
+        job.status = 'error';
+        job.error = `Over your ${sizeLabel(s.guestMaxMB!)} limit`;
+      } else if (!allowed.includes(mime)) {
         job.status = 'error';
         job.error = mime.startsWith('video/') ? 'Videos aren’t accepted' : 'Unsupported file type';
       } else if (file.size > s.maxFileMB * 1024 * 1024) {
@@ -218,7 +262,7 @@
       job.progress = 1;
       sentHere++;
       if (event.settings.guestView && !item.hidden) {
-        items = [item, ...items];
+        if (!by || by === item.uploader) items = [item, ...items];
         event.count++;
       }
     } catch (err) {
@@ -352,11 +396,32 @@
 
     {#if !event.settings.uploadsOpen}
       <p class="notice muted small">Uploads are closed. {event.settings.guestView ? 'You can still browse the wall.' : ''}</p>
+    {:else if limits}
+      <p class="notice muted small">
+        {#if atLimit}
+          You’ve reached this event’s upload limit. Thank you for sharing!
+        {:else}
+          Each guest can add
+          {[
+            event.settings.guestMaxFiles !== null ? plural(event.settings.guestMaxFiles, 'file') : '',
+            event.settings.guestMaxMB !== null ? sizeLabel(event.settings.guestMaxMB) : '',
+          ]
+            .filter(Boolean)
+            .join(' or ')}{event.settings.guestMaxFiles !== null && event.settings.guestMaxMB !== null ? ', whichever comes first' : ''}.
+          {[
+            limits.files !== null ? `${limits.files.toLocaleString()} ${limits.files === 1 ? 'file' : 'files'}` : '',
+            limits.bytes !== null ? sizeLabel(limits.bytes / 1024 / 1024) : '',
+          ]
+            .filter(Boolean)
+            .join(' / ')} left.
+        {/if}
+      </p>
     {/if}
 
     {#if event.settings.guestView}
+      <GuestFilter {guests} value={by} onchange={showGuest} />
       {#if items.length}
-        <MediaGrid {items} onopen={(i) => (open = i)} {selecting} {selected} ontoggle={toggle} />
+        <MediaGrid {items} onopen={(i) => (open = i)} {selecting} {selected} ontoggle={toggle} names />
         <div bind:this={sentinel} class="sentinel">{#if loadingMore}<div class="spinner"></div>{/if}</div>
       {:else}
         <div class="empty">
@@ -422,7 +487,7 @@
         <button class="btn ghost" onclick={() => (sheetOpen = true)}>{busyCount ? `${Math.round(overall * 100)}%` : 'Uploads'}</button>
       {/if}
       {#if event.settings.uploadsOpen}
-        <button class="btn accent lg" onclick={pick}><Icon name="plus" size={20} /> Add photos</button>
+        <button class="btn accent lg" onclick={pick} disabled={atLimit}><Icon name="plus" size={20} /> Add photos</button>
       {/if}
       {#if event.settings.guestDownload && items.length}
         <button class="btn ghost" onclick={() => (selecting = true)}>Select</button>

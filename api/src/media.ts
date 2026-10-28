@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import type { EventSettings, MediaFilter, MediaItem, MediaPage } from '../../shared/types';
+import type { EventSettings, GuestCount, MediaFilter, MediaItem, MediaPage } from '../../shared/types';
 import { sign, verify } from './crypto';
 import { driveFor } from './google';
 import { HttpError, now, parseSettings, type AppEnv, type Ctx, type EventRow, type OwnerRow, type UploadRow } from './util';
@@ -51,6 +51,11 @@ export async function listMedia(
   if (aud === 'g') sql += ' AND hidden = 0';
   else if (filter === 'awaiting') sql += ' AND review = 1';
   else if (filter === 'hidden') sql += ' AND hidden = 1 AND review = 0';
+  const by = c.req.query('by');
+  if (by) {
+    sql += ' AND uploader = ?';
+    args.push(by);
+  }
   if (cursor) {
     const [ts, id] = cursor.split('_');
     sql += ' AND (created_at < ? OR (created_at = ? AND id < ?))';
@@ -64,6 +69,18 @@ export async function listMedia(
     items: await Promise.all(page.map((u) => toMediaItem(c, event, u, aud, settings))),
     next: results.length > PAGE && last ? `${last.created_at}_${last.id}` : null,
   };
+}
+
+/** Guest names with upload counts, most active first. Guests only see names on visible uploads. */
+export async function listGuests(c: Ctx, event: EventRow, aud: Audience): Promise<GuestCount[]> {
+  const { results } = await c.env.DB.prepare(
+    `SELECT uploader AS name, COUNT(*) AS count FROM uploads
+     WHERE event_id = ? AND status = 'done' AND uploader IS NOT NULL${aud === 'g' ? ' AND hidden = 0' : ''}
+     GROUP BY uploader ORDER BY count DESC, uploader LIMIT 200`,
+  )
+    .bind(event.id)
+    .all<GuestCount>();
+  return results;
 }
 
 function contentDisposition(type: 'inline' | 'attachment', name: string): string {

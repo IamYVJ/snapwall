@@ -21,6 +21,10 @@ export interface EventSettings {
   stripLocation: boolean;
   /** Unix seconds after which uploads close automatically. */
   expiresAt: number | null;
+  /** Most files one guest may upload, or null for no limit. */
+  guestMaxFiles: number | null;
+  /** Most megabytes one guest may upload in total, or null for no limit. */
+  guestMaxMB: number | null;
 }
 
 export interface Me {
@@ -63,8 +67,19 @@ export interface PublicEvent {
   count: number;
   settings: Pick<
     EventSettings,
-    'guestView' | 'guestDownload' | 'allowVideo' | 'uploadsOpen' | 'maxFileMB' | 'requireName' | 'stripLocation' | 'moderation'
+    | 'guestView'
+    | 'guestDownload'
+    | 'allowVideo'
+    | 'uploadsOpen'
+    | 'maxFileMB'
+    | 'requireName'
+    | 'stripLocation'
+    | 'moderation'
+    | 'guestMaxFiles'
+    | 'guestMaxMB'
   >;
+  /** What this guest has uploaded so far, when the event has per-guest limits. */
+  usage: { files: number; bytes: number } | null;
 }
 
 export interface MediaItem {
@@ -80,6 +95,12 @@ export interface MediaItem {
   thumb: string;
   full: string;
   download: string | null;
+}
+
+/** A guest name and how many uploads carry it, for filtering the wall by guest. */
+export interface GuestCount {
+  name: string;
+  count: number;
 }
 
 /** Admin media list filters. */

@@ -75,6 +75,7 @@ export interface UploadRow {
   /** 1 while awaiting the host's approval. */
   review: number;
   ip_hash: string;
+  guest_hash: string | null;
   created_at: number;
 }
 
@@ -88,9 +89,18 @@ export const DEFAULT_SETTINGS: EventSettings = {
   requireName: false,
   stripLocation: true,
   expiresAt: null,
+  guestMaxFiles: null,
+  guestMaxMB: null,
 };
 
 export const MAX_FILE_MB = 5000;
+
+/** null, or a whole number clamped to [1, max]. Anything else leaves the current value. */
+function cleanLimit(value: unknown, current: number | null, max: number): number | null {
+  if (value === null) return null;
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.min(max, Math.max(1, Math.round(value)));
+  return current;
+}
 
 export function parseSettings(json: string): EventSettings {
   return { ...DEFAULT_SETTINGS, ...(JSON.parse(json) as Partial<EventSettings>) };
@@ -107,6 +117,8 @@ export function mergeSettings(base: EventSettings, input: unknown): EventSetting
   if (typeof src.maxFileMB === 'number' && Number.isFinite(src.maxFileMB)) {
     out.maxFileMB = Math.min(MAX_FILE_MB, Math.max(1, Math.round(src.maxFileMB)));
   }
+  if ('guestMaxFiles' in src) out.guestMaxFiles = cleanLimit(src.guestMaxFiles, out.guestMaxFiles, 10_000);
+  if ('guestMaxMB' in src) out.guestMaxMB = cleanLimit(src.guestMaxMB, out.guestMaxMB, 1_000_000);
   if (src.expiresAt === null || (typeof src.expiresAt === 'number' && Number.isFinite(src.expiresAt))) {
     out.expiresAt = src.expiresAt as number | null;
   }

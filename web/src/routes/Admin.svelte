@@ -1,7 +1,8 @@
 <script lang="ts">
   import QRCode from 'qrcode';
   import { onDestroy, onMount } from 'svelte';
-  import type { AdminEvent, EventSettings, MediaFilter, MediaItem } from '../../../shared/types';
+  import type { AdminEvent, EventSettings, GuestCount, MediaFilter, MediaItem } from '../../../shared/types';
+  import GuestFilter from '../components/GuestFilter.svelte';
   import Icon from '../components/Icon.svelte';
   import Lightbox from '../components/Lightbox.svelte';
   import MediaGrid from '../components/MediaGrid.svelte';
@@ -11,7 +12,7 @@
   import Toggle from '../components/Toggle.svelte';
   import Wordmark from '../components/Wordmark.svelte';
   import { ApiError, adminApi, session, signInUrl, type EventPatch } from '../lib/api';
-  import { copyText, formatDate, isVideo, plural, saveBlob } from '../lib/format';
+  import { copyText, formatDate, isVideo, plural, saveBlob, sizeLabel } from '../lib/format';
   import { go, href, pageUrl } from '../lib/router.svelte';
   import { streamsToDisk, zipMedia, type ZipProgress, type ZipResult } from '../lib/zip';
 
@@ -25,6 +26,8 @@
   let items = $state<MediaItem[]>([]);
   let next = $state<string | null>(null);
   let filter = $state<MediaFilter>('all');
+  let guests = $state<GuestCount[]>([]);
+  let by = $state<string | null>(null);
   let open = $state<number | null>(null);
   let saving = $state(false);
   let toast = $state('');
@@ -44,6 +47,7 @@
   let zipOpen = $state(false);
   let zipVideos = $state(true);
   let zipHidden = $state(false);
+  let zipFolders = $state(false);
   let zipPhase = $state<'idle' | 'listing' | 'zipping' | 'done' | 'error'>('idle');
   let zipProgress = $state<ZipProgress | null>(null);
   let zipResult = $state<ZipResult | null>(null);
@@ -79,7 +83,8 @@
     }
     try {
       event = await api.get();
-      const page = await api.media(null, filter);
+      const [page, g] = await Promise.all([api.media(null, filter), api.guests().catch(() => [])]);
+      guests = g;
       items = page.items;
       next = page.next;
       phase = 'ready';
@@ -93,8 +98,11 @@
   async function refreshMedia() {
     if (document.hidden) return;
     try {
-      const [ev, page] = await Promise.all([api.get(), api.media(null, filter)]);
+      const want = { filter, by };
+      const [ev, page, g] = await Promise.all([api.get(), api.media(null, filter, by), api.guests().catch(() => guests)]);
       if (!saving) event = ev;
+      guests = g;
+      if (want.filter !== filter || want.by !== by) return;
       const known = new Set(items.map((i) => i.id));
       const fresh = page.items.filter((i) => !known.has(i.id));
       if (!next) {
@@ -109,19 +117,20 @@
 
   async function loadMore() {
     if (!next) return;
-    const page = await api.media(next, filter);
+    const page = await api.media(next, filter, by);
     items = [...items, ...page.items.filter((i) => !items.some((x) => x.id === i.id))];
     next = page.next;
   }
 
-  async function showFilter(f: MediaFilter, reload = false) {
-    if (f === filter && !reload) return;
+  async function showFilter(f: MediaFilter, reload = false, name = by) {
+    if (f === filter && name === by && !reload) return;
     filter = f;
+    by = name;
     items = [];
     next = null;
     try {
-      const page = await api.media(null, f);
-      if (filter !== f) return;
+      const page = await api.media(null, f, name);
+      if (filter !== f || by !== name) return;
       items = page.items;
       next = page.next;
     } catch (err) {
@@ -129,7 +138,8 @@
     }
   }
 
-  const matches = (i: MediaItem) => (filter === 'awaiting' ? i.awaiting : filter === 'hidden' ? i.hidden && !i.awaiting : true);
+  const matches = (i: MediaItem) =>
+    (!by || i.uploader === by) && (filter === 'awaiting' ? i.awaiting : filter === 'hidden' ? i.hidden && !i.awaiting : true);
 
   async function refreshCounts() {
     event = await api.get().catch(() => event);
@@ -180,6 +190,7 @@
         filename: `${event.name}.zip`,
         list: async () => zipPick(await listAll()),
         refresh: listAll,
+        folder: zipFolders ? (i) => i.uploader ?? 'No name' : undefined,
         signal: zipAbort.signal,
         onProgress: (p) => {
           zipPhase = 'zipping';
@@ -444,6 +455,44 @@
             </select>
           </label>
           <label class="field">
+            <span>Files per guest</span>
+            <select
+              class="input"
+              value={String(event.settings.guestMaxFiles ?? '')}
+              onchange={(e) => {
+                const v = (e.currentTarget as HTMLSelectElement).value;
+                patch({ settings: { guestMaxFiles: v ? Number(v) : null } });
+              }}
+            >
+              <option value="">No limit</option>
+              {#each [10, 25, 50, 100, 250, 500] as n}
+                <option value={String(n)}>{n}</option>
+              {/each}
+              {#if event.settings.guestMaxFiles !== null && ![10, 25, 50, 100, 250, 500].includes(event.settings.guestMaxFiles)}
+                <option value={String(event.settings.guestMaxFiles)}>{event.settings.guestMaxFiles}</option>
+              {/if}
+            </select>
+          </label>
+          <label class="field">
+            <span>Storage per guest</span>
+            <select
+              class="input"
+              value={String(event.settings.guestMaxMB ?? '')}
+              onchange={(e) => {
+                const v = (e.currentTarget as HTMLSelectElement).value;
+                patch({ settings: { guestMaxMB: v ? Number(v) : null } });
+              }}
+            >
+              <option value="">No limit</option>
+              {#each [250, 500, 1000, 2000, 5000, 10000] as n}
+                <option value={String(n)}>{sizeLabel(n)}</option>
+              {/each}
+              {#if event.settings.guestMaxMB !== null && ![250, 500, 1000, 2000, 5000, 10000].includes(event.settings.guestMaxMB)}
+                <option value={String(event.settings.guestMaxMB)}>{sizeLabel(event.settings.guestMaxMB)}</option>
+              {/if}
+            </select>
+          </label>
+          <label class="field">
             <span>Close uploads at</span>
             <input
               class="input"
@@ -499,8 +548,9 @@
           <button class="btn sm" disabled={approving} onclick={() => approve()}><Icon name="check" size={16} /> Approve all {event.awaiting}</button>
         {/if}
       </div>
+      <GuestFilter {guests} value={by} onchange={(name) => showFilter(filter, false, name)} />
       {#if items.length}
-        <MediaGrid {items} onopen={(i) => (open = i)}>
+        <MediaGrid {items} onopen={(i) => (open = i)} names>
           {#snippet actions(item)}
             {#if item.awaiting}
               <button class="mini approve" disabled={approving} onclick={() => approve(item)} aria-label="Approve" title="Approve and show on the wall">
@@ -588,6 +638,7 @@
         {#if event.hidden || event.awaiting}
           <Toggle label="Include hidden uploads" hint="Also those still waiting for approval." bind:checked={zipHidden} />
         {/if}
+        <Toggle label="A folder for each guest" hint="Uploads without a name go in “No name”." bind:checked={zipFolders} />
       </div>
       {#if !streamsToDisk}
         <p class="muted small" style="margin: 0">

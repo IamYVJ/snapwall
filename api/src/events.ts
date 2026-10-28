@@ -3,7 +3,7 @@ import type { AdminEvent, CreatedEvent, MediaFilter } from '../../shared/types';
 import { findOwner, requireOwner } from './auth';
 import { decrypt, encrypt, randomToken, sha256 } from './crypto';
 import { driveFor, ensureRootFolder } from './google';
-import { listMedia, toMediaItem } from './media';
+import { listGuests, listMedia, toMediaItem } from './media';
 import {
   DEFAULT_SETTINGS,
   HttpError,
@@ -206,6 +206,11 @@ events.get('/:id/media', async (c) => {
   const { event } = await eventAccess(c);
   const filter = FILTERS.find((f) => f === c.req.query('filter')) ?? 'all';
   return c.json(await listMedia(c, event, 'a', parseSettings(event.settings), filter));
+});
+
+events.get('/:id/guests', async (c) => {
+  const { event } = await eventAccess(c);
+  return c.json(await listGuests(c, event, 'a'));
 });
 
 /** Approves uploads awaiting review: the given ids, or all of them when none are given. */

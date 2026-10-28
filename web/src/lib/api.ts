@@ -2,6 +2,7 @@ import type {
   AdminEvent,
   CreatedEvent,
   EventSettings,
+  GuestCount,
   MediaFilter,
   MediaItem,
   MediaPage,
@@ -92,13 +93,15 @@ export function adminApi(eventId: string, adminToken: string | null) {
     update: (patch: EventPatch) => request<AdminEvent>(base, { method: 'PATCH', headers: headers(), json: patch }),
     rotate: (which: 'guest' | 'admin') => request<CreatedEvent>(`${base}/rotate`, { method: 'POST', headers: headers(), json: { which } }),
     remove: (trashFolder: boolean) => request(`${base}${trashFolder ? '?trash=1' : ''}`, { method: 'DELETE', headers: headers() }),
-    media: (cursor?: string | null, filter: MediaFilter = 'all') => {
+    media: (cursor?: string | null, filter: MediaFilter = 'all', by?: string | null) => {
       const q = new URLSearchParams();
       if (cursor) q.set('cursor', cursor);
       if (filter !== 'all') q.set('filter', filter);
+      if (by) q.set('by', by);
       const qs = q.toString();
       return request<MediaPage>(`${base}/media${qs ? `?${qs}` : ''}`, { headers: headers() });
     },
+    guests: () => request<GuestCount[]>(`${base}/guests`, { headers: headers() }),
     /** Approves the given uploads, or everything awaiting approval when no ids are given. */
     approve: (ids?: string[]) =>
       request<{ approved: number }>(`${base}/media/approve`, { method: 'POST', headers: headers(), json: ids ? { ids } : {} }),
@@ -108,16 +111,40 @@ export function adminApi(eventId: string, adminToken: string | null) {
   };
 }
 
+const GUEST_KEY = 'snapwall.guest';
+
+/** A random ID for this browser, so per-guest upload limits don't lump together everyone on the venue's Wi-Fi. */
+function guestId(): string | null {
+  const s = store();
+  let id = s?.getItem(GUEST_KEY) ?? null;
+  if (!id) {
+    const bytes = crypto.getRandomValues(new Uint8Array(18));
+    id = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_');
+    s?.setItem(GUEST_KEY, id);
+  }
+  return id;
+}
+
 export function guestApi(token: string, pin: () => string | null) {
   const headers = (): HeadersInit => {
+    const h: Record<string, string> = {};
     const p = pin();
-    return p ? { 'X-Event-Pin': p } : {};
+    if (p) h['X-Event-Pin'] = p;
+    const id = guestId();
+    if (id) h['X-Guest-Id'] = id;
+    return h;
   };
   const base = `/g/${encodeURIComponent(token)}`;
   return {
     event: () => request<PublicEvent>(base, { headers: headers() }),
-    media: (cursor?: string | null) =>
-      request<MediaPage>(`${base}/media${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, { headers: headers() }),
+    media: (cursor?: string | null, by?: string | null) => {
+      const q = new URLSearchParams();
+      if (cursor) q.set('cursor', cursor);
+      if (by) q.set('by', by);
+      const qs = q.toString();
+      return request<MediaPage>(`${base}/media${qs ? `?${qs}` : ''}`, { headers: headers() });
+    },
+    guests: () => request<GuestCount[]>(`${base}/guests`, { headers: headers() }),
     startUpload: (body: { name: string; size: number; mime: string; uploader: string | null }) =>
       request<UploadSlot>(`${base}/uploads`, { method: 'POST', headers: headers(), json: body }),
     completeUpload: (uploadId: string, fileId: string) =>
