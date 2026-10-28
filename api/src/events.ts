@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import type { AdminEvent, CreatedEvent } from '../../shared/types';
+import type { AdminEvent, CreatedEvent, MediaFilter } from '../../shared/types';
 import { findOwner, requireOwner } from './auth';
 import { decrypt, encrypt, randomToken, sha256 } from './crypto';
 import { driveFor, ensureRootFolder } from './google';
@@ -24,11 +24,14 @@ import {
 const folderUrl = (id: string) => `https://drive.google.com/drive/folders/${id}`;
 export const pinHash = (eventId: string, pin: string) => sha256(`${eventId}:${pin}`);
 
-async function countUploads(c: Ctx, eventId: string): Promise<number> {
-  const row = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM uploads WHERE event_id = ? AND status = 'done'`)
+async function countUploads(c: Ctx, eventId: string) {
+  const row = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS n, SUM(review) AS awaiting, SUM(hidden = 1 AND review = 0) AS hidden
+     FROM uploads WHERE event_id = ? AND status = 'done'`,
+  )
     .bind(eventId)
-    .first<{ n: number }>();
-  return row?.n ?? 0;
+    .first<{ n: number; awaiting: number | null; hidden: number | null }>();
+  return { count: row?.n ?? 0, awaiting: row?.awaiting ?? 0, hidden: row?.hidden ?? 0 };
 }
 
 async function toAdminEvent(c: Ctx, e: EventRow, owner: OwnerRow): Promise<AdminEvent> {
@@ -37,7 +40,7 @@ async function toAdminEvent(c: Ctx, e: EventRow, owner: OwnerRow): Promise<Admin
     name: e.name,
     date: e.date,
     status: e.status,
-    count: await countUploads(c, e.id),
+    ...(await countUploads(c, e.id)),
     createdAt: e.created_at,
     settings: parseSettings(e.settings),
     hasPin: !!e.pin_hash,
@@ -197,9 +200,30 @@ events.delete('/:id', async (c) => {
   return c.json({ ok: true });
 });
 
+const FILTERS: MediaFilter[] = ['all', 'awaiting', 'hidden'];
+
 events.get('/:id/media', async (c) => {
   const { event } = await eventAccess(c);
-  return c.json(await listMedia(c, event, 'a', parseSettings(event.settings)));
+  const filter = FILTERS.find((f) => f === c.req.query('filter')) ?? 'all';
+  return c.json(await listMedia(c, event, 'a', parseSettings(event.settings), filter));
+});
+
+/** Approves uploads awaiting review: the given ids, or all of them when none are given. */
+events.post('/:id/media/approve', async (c) => {
+  const { event } = await eventAccess(c);
+  const { ids } = await readJson<{ ids?: unknown }>(c);
+  const db = c.env.DB;
+  let sql = 'UPDATE uploads SET hidden = 0, review = 0 WHERE event_id = ? AND review = 1';
+  const args: string[] = [event.id];
+  if (ids !== undefined) {
+    if (!Array.isArray(ids) || !ids.length || ids.length > 100 || !ids.every((i) => typeof i === 'string')) {
+      throw new HttpError(400, 'bad_ids');
+    }
+    sql += ` AND id IN (${ids.map(() => '?').join(', ')})`;
+    args.push(...ids);
+  }
+  const [res] = await db.batch([db.prepare(sql).bind(...args), bumpMedia(db, event.id)]);
+  return c.json({ approved: res.meta.changes ?? 0 });
 });
 
 async function findUpload(c: Ctx, event: EventRow): Promise<UploadRow> {
@@ -216,8 +240,13 @@ events.patch('/:id/media/:mid', async (c) => {
   const { hidden } = await readJson<{ hidden?: boolean }>(c);
   if (typeof hidden !== 'boolean') throw new HttpError(400, 'bad_hidden');
   const db = c.env.DB;
-  await db.batch([db.prepare('UPDATE uploads SET hidden = ? WHERE id = ?').bind(hidden ? 1 : 0, u.id), bumpMedia(db, event.id)]);
+  // Showing approves an upload; hiding one that awaits approval rejects it. Either way it's no longer awaiting.
+  await db.batch([
+    db.prepare('UPDATE uploads SET hidden = ?, review = 0 WHERE id = ?').bind(hidden ? 1 : 0, u.id),
+    bumpMedia(db, event.id),
+  ]);
   u.hidden = hidden ? 1 : 0;
+  u.review = 0;
   return c.json(await toMediaItem(c, event, u, 'a', parseSettings(event.settings)));
 });
 

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { downloadZip } from 'client-zip';
   import { onDestroy, onMount } from 'svelte';
   import type { MediaItem, PublicEvent } from '../../../shared/types';
   import { IMAGE_TYPES, VIDEO_TYPES } from '../../../shared/types';
@@ -8,10 +7,11 @@
   import MediaGrid from '../components/MediaGrid.svelte';
   import Modal from '../components/Modal.svelte';
   import { ApiError, guestApi } from '../lib/api';
-  import { formatDate, plural, saveBlob } from '../lib/format';
+  import { formatDate, plural } from '../lib/format';
   import { eventManifest, install } from '../lib/install.svelte';
-import { href } from '../lib/router.svelte';
+  import { href } from '../lib/router.svelte';
   import { mimeOf, uploadFile } from '../lib/upload';
+  import { zipMedia } from '../lib/zip';
 
   let { token }: { token: string } = $props();
 
@@ -255,22 +255,16 @@ import { href } from '../lib/router.svelte';
     }
     zipping = true;
     try {
-      const used = new Map<string, number>();
-      const unique = (name: string) => {
-        const n = used.get(name) ?? 0;
-        used.set(name, n + 1);
-        return n ? name.replace(/(\.[^.]*)?$/, ` (${n})$1`) : name;
-      };
-      async function* files() {
-        for (const item of chosen) {
-          const res = await fetch(item.download!, { referrerPolicy: 'no-referrer' });
-          if (res.ok) yield { name: unique(item.name), input: res, lastModified: new Date(item.createdAt * 1000) };
-        }
+      const res = await zipMedia({
+        filename: `${event?.name ?? 'snapwall'}.zip`,
+        list: async () => chosen,
+        signal: new AbortController().signal,
+        onProgress: () => {},
+      });
+      if (res) {
+        selecting = false;
+        selected = new Set();
       }
-      const blob = await downloadZip(files()).blob();
-      saveBlob(blob, `${event?.name ?? 'snapwall'}.zip`.replace(/[\\/:*?"<>|]/g, '_'));
-      selecting = false;
-      selected = new Set();
     } finally {
       zipping = false;
     }

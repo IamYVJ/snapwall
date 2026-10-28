@@ -39,6 +39,10 @@ export interface EventSummary {
 }
 
 export interface AdminEvent extends EventSummary {
+  /** Uploads waiting for approval. */
+  awaiting: number;
+  /** Uploads the host has hidden (not counting those awaiting approval). */
+  hidden: number;
   settings: EventSettings;
   hasPin: boolean;
   guestToken: string;
@@ -71,10 +75,15 @@ export interface MediaItem {
   uploader: string | null;
   createdAt: number;
   hidden: boolean;
+  /** Waiting for the host's approval (admin only; also hidden). */
+  awaiting: boolean;
   thumb: string;
   full: string;
   download: string | null;
 }
+
+/** Admin media list filters. */
+export type MediaFilter = 'all' | 'awaiting' | 'hidden';
 
 export interface MediaPage {
   items: MediaItem[];

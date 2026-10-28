@@ -72,6 +72,8 @@ export interface UploadRow {
   uploader: string | null;
   status: 'pending' | 'done';
   hidden: number;
+  /** 1 while awaiting the host's approval. */
+  review: number;
   ip_hash: string;
   created_at: number;
 }

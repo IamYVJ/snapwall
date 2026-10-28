@@ -1,7 +1,7 @@
 <script lang="ts">
   import QRCode from 'qrcode';
   import { onDestroy, onMount } from 'svelte';
-  import type { AdminEvent, EventSettings, MediaItem } from '../../../shared/types';
+  import type { AdminEvent, EventSettings, MediaFilter, MediaItem } from '../../../shared/types';
   import Icon from '../components/Icon.svelte';
   import Lightbox from '../components/Lightbox.svelte';
   import MediaGrid from '../components/MediaGrid.svelte';
@@ -11,8 +11,9 @@
   import Toggle from '../components/Toggle.svelte';
   import Wordmark from '../components/Wordmark.svelte';
   import { ApiError, adminApi, session, signInUrl, type EventPatch } from '../lib/api';
-  import { copyText, formatDate, plural, saveBlob } from '../lib/format';
+  import { copyText, formatDate, isVideo, plural, saveBlob } from '../lib/format';
   import { go, href, pageUrl } from '../lib/router.svelte';
+  import { streamsToDisk, zipMedia, type ZipProgress, type ZipResult } from '../lib/zip';
 
   let { eventId, adminToken }: { eventId: string; adminToken: string | null } = $props();
 
@@ -23,7 +24,7 @@
   let event = $state<AdminEvent | null>(null);
   let items = $state<MediaItem[]>([]);
   let next = $state<string | null>(null);
-  let filter = $state<'all' | 'hidden'>('all');
+  let filter = $state<MediaFilter>('all');
   let open = $state<number | null>(null);
   let saving = $state(false);
   let toast = $state('');
@@ -38,14 +39,21 @@
   let pinModal = $state(false);
   let pinInput = $state('');
   let posterOpen = $state(false);
+  let approving = $state(false);
+
+  let zipOpen = $state(false);
+  let zipVideos = $state(true);
+  let zipHidden = $state(false);
+  let zipPhase = $state<'idle' | 'listing' | 'zipping' | 'done' | 'error'>('idle');
+  let zipProgress = $state<ZipProgress | null>(null);
+  let zipResult = $state<ZipResult | null>(null);
+  let zipAbort: AbortController | null = null;
 
   let poll: ReturnType<typeof setInterval> | undefined;
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
   const guestUrl = $derived(event ? pageUrl(`e/${event.guestToken}`) : '');
   const adminUrl = $derived(adminToken ? pageUrl(`a/${eventId}/${adminToken}`) : newAdminLink);
-  const visible = $derived(filter === 'hidden' ? items.filter((i) => i.hidden) : items);
-  const hiddenCount = $derived(items.filter((i) => i.hidden).length);
   const expiresLocal = $derived(event?.settings.expiresAt ? toLocalInput(event.settings.expiresAt) : '');
 
   function toLocalInput(sec: number): string {
@@ -71,7 +79,7 @@
     }
     try {
       event = await api.get();
-      const page = await api.media();
+      const page = await api.media(null, filter);
       items = page.items;
       next = page.next;
       phase = 'ready';
@@ -85,7 +93,8 @@
   async function refreshMedia() {
     if (document.hidden) return;
     try {
-      const page = await api.media();
+      const [ev, page] = await Promise.all([api.get(), api.media(null, filter)]);
+      if (!saving) event = ev;
       const known = new Set(items.map((i) => i.id));
       const fresh = page.items.filter((i) => !known.has(i.id));
       if (!next) {
@@ -100,10 +109,110 @@
 
   async function loadMore() {
     if (!next) return;
-    const page = await api.media(next);
-    items = [...items, ...page.items];
+    const page = await api.media(next, filter);
+    items = [...items, ...page.items.filter((i) => !items.some((x) => x.id === i.id))];
     next = page.next;
   }
+
+  async function showFilter(f: MediaFilter, reload = false) {
+    if (f === filter && !reload) return;
+    filter = f;
+    items = [];
+    next = null;
+    try {
+      const page = await api.media(null, f);
+      if (filter !== f) return;
+      items = page.items;
+      next = page.next;
+    } catch (err) {
+      fail(err);
+    }
+  }
+
+  const matches = (i: MediaItem) => (filter === 'awaiting' ? i.awaiting : filter === 'hidden' ? i.hidden && !i.awaiting : true);
+
+  async function refreshCounts() {
+    event = await api.get().catch(() => event);
+  }
+
+  async function approve(item?: MediaItem) {
+    approving = true;
+    try {
+      const { approved } = await api.approve(item ? [item.id] : undefined);
+      if (item) {
+        items = items.map((i) => (i.id === item.id ? { ...i, hidden: false, awaiting: false } : i)).filter(matches);
+      } else {
+        items = items.map((i) => (i.awaiting ? { ...i, hidden: false, awaiting: false } : i)).filter(matches);
+        flash(`${plural(approved, 'upload')} approved`);
+      }
+      await refreshCounts();
+      // The next page of the queue may still hold more.
+      if (filter === 'awaiting' && !items.length && event?.awaiting) await showFilter('awaiting', true);
+    } catch (err) {
+      fail(err);
+    } finally {
+      approving = false;
+    }
+  }
+
+  /** Every item in the event, all pages. */
+  async function listAll(): Promise<MediaItem[]> {
+    const all: MediaItem[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await api.media(cursor);
+      all.push(...page.items);
+      cursor = page.next;
+    } while (cursor);
+    return all;
+  }
+
+  const zipPick = (all: MediaItem[]) => all.filter((i) => (zipVideos || !isVideo(i.mime)) && (zipHidden || !i.hidden));
+
+  async function downloadAll() {
+    if (!event) return;
+    zipAbort = new AbortController();
+    zipResult = null;
+    zipProgress = null;
+    zipPhase = 'listing';
+    try {
+      const res = await zipMedia({
+        filename: `${event.name}.zip`,
+        list: async () => zipPick(await listAll()),
+        refresh: listAll,
+        signal: zipAbort.signal,
+        onProgress: (p) => {
+          zipPhase = 'zipping';
+          zipProgress = p;
+        },
+      });
+      if (!res) zipPhase = 'idle';
+      else {
+        zipResult = res;
+        zipPhase = 'done';
+      }
+    } catch (err) {
+      zipPhase = zipAbort?.signal.aborted ? 'idle' : 'error';
+    } finally {
+      zipAbort = null;
+    }
+  }
+
+  function closeZip() {
+    zipAbort?.abort();
+    zipOpen = false;
+    zipPhase = 'idle';
+  }
+
+  const zipRunning = $derived(zipPhase === 'listing' || zipPhase === 'zipping');
+  const zipPercent = $derived(zipProgress?.totalBytes ? Math.min(100, Math.round((zipProgress.bytes / zipProgress.totalBytes) * 100)) : 0);
+  // Closing the dialog mid-download keeps it going; only Cancel stops it. A finished result is cleared on close.
+  $effect(() => {
+    if (!zipOpen && (zipPhase === 'done' || zipPhase === 'error')) zipPhase = 'idle';
+  });
+
+  const mb = (bytes: number) =>
+    bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(bytes / 1e6, bytes ? 0.1 : 0).toFixed(bytes >= 1e8 ? 0 : 1)} MB`;
 
   async function patch(p: EventPatch, message = 'Saved') {
     saving = true;
@@ -160,7 +269,8 @@
   async function setHidden(item: MediaItem, hidden: boolean) {
     try {
       const updated = await api.setHidden(item.id, hidden);
-      items = items.map((i) => (i.id === item.id ? updated : i));
+      items = items.map((i) => (i.id === item.id ? updated : i)).filter(matches);
+      await refreshCounts();
     } catch (err) {
       fail(err);
     }
@@ -171,7 +281,7 @@
     try {
       await api.removeMedia(item.id);
       items = items.filter((i) => i.id !== item.id);
-      if (event) event.count--;
+      await refreshCounts();
     } catch (err) {
       fail(err);
     }
@@ -198,12 +308,13 @@
 
   onMount(load);
   onDestroy(() => {
+    zipAbort?.abort();
     clearInterval(poll);
     clearTimeout(toastTimer);
   });
 </script>
 
-<svelte:head><title>{event ? `Manage ${event.name} · SnapWall` : 'SnapWall'}</title></svelte:head>
+<svelte:head><title>{event ? `${event.awaiting ? `(${event.awaiting}) ` : ''}Manage ${event.name} · SnapWall` : 'SnapWall'}</title></svelte:head>
 
 {#if phase === 'loading'}
   <div class="center-screen"><div class="spinner"></div></div>
@@ -253,7 +364,9 @@
         {#if event.date}<span class="eyebrow">{formatDate(event.date)}</span>{/if}
       </div>
       <h1 class="display">{event.name}</h1>
-      <p class="muted">{plural(event.count, 'item')}{hiddenCount ? ` · ${hiddenCount} awaiting approval or hidden` : ''}</p>
+      <p class="muted">
+        {plural(event.count, 'item')}{event.awaiting ? ` · ${event.awaiting} awaiting approval` : ''}{event.hidden ? ` · ${event.hidden} hidden` : ''}
+      </p>
     </section>
 
     <div class="layout">
@@ -362,34 +475,62 @@
       <div class="row media-head">
         <h2 class="h2">Wall</h2>
         <span class="spacer"></span>
+        {#if event.count}
+          <button class="btn ghost sm" onclick={() => (zipOpen = true)}>
+            <Icon name="download" size={16} />
+            {zipRunning ? `Downloading ${zipPercent}%` : 'Download all'}
+          </button>
+        {/if}
+      </div>
+      <div class="row media-tabs">
         <div class="seg" role="tablist">
-          <button role="tab" aria-selected={filter === 'all'} class:on={filter === 'all'} onclick={() => (filter = 'all')}>All</button>
-          <button role="tab" aria-selected={filter === 'hidden'} class:on={filter === 'hidden'} onclick={() => (filter = 'hidden')}>
-            Hidden{hiddenCount ? ` (${hiddenCount})` : ''}
+          <button role="tab" aria-selected={filter === 'all'} class:on={filter === 'all'} onclick={() => showFilter('all')}>All</button>
+          {#if event.settings.moderation || event.awaiting}
+            <button role="tab" aria-selected={filter === 'awaiting'} class:on={filter === 'awaiting'} onclick={() => showFilter('awaiting')}>
+              To approve{event.awaiting ? ` (${event.awaiting})` : ''}
+            </button>
+          {/if}
+          <button role="tab" aria-selected={filter === 'hidden'} class:on={filter === 'hidden'} onclick={() => showFilter('hidden')}>
+            Hidden{event.hidden ? ` (${event.hidden})` : ''}
           </button>
         </div>
+        <span class="spacer"></span>
+        {#if filter === 'awaiting' && event.awaiting > 1}
+          <button class="btn sm" disabled={approving} onclick={() => approve()}><Icon name="check" size={16} /> Approve all {event.awaiting}</button>
+        {/if}
       </div>
-      {#if visible.length}
-        <MediaGrid items={visible} onopen={(i) => (open = i)}>
+      {#if items.length}
+        <MediaGrid {items} onopen={(i) => (open = i)}>
           {#snippet actions(item)}
-            <button
-              class="mini"
-              onclick={() => setHidden(item, !item.hidden)}
-              aria-label={item.hidden ? 'Show on wall' : 'Hide from wall'}
-              title={item.hidden ? 'Show on wall' : 'Hide from wall'}
-            >
-              <Icon name={item.hidden ? 'eye' : 'eyeOff'} size={16} />
-            </button>
+            {#if item.awaiting}
+              <button class="mini approve" disabled={approving} onclick={() => approve(item)} aria-label="Approve" title="Approve and show on the wall">
+                <Icon name="check" size={16} stroke={2.2} />
+              </button>
+              <button class="mini" onclick={() => setHidden(item, true)} aria-label="Reject" title="Reject and keep hidden">
+                <Icon name="close" size={16} />
+              </button>
+            {:else}
+              <button
+                class="mini"
+                onclick={() => setHidden(item, !item.hidden)}
+                aria-label={item.hidden ? 'Show on wall' : 'Hide from wall'}
+                title={item.hidden ? 'Show on wall' : 'Hide from wall'}
+              >
+                <Icon name={item.hidden ? 'eye' : 'eyeOff'} size={16} />
+              </button>
+            {/if}
             <button class="mini" onclick={() => removeItem(item)} aria-label="Delete" title="Move to Drive trash">
               <Icon name="trash" size={16} />
             </button>
           {/snippet}
         </MediaGrid>
-        {#if next && filter === 'all'}
+        {#if next}
           <div class="row" style="justify-content: center; padding: 24px 0"><button class="btn ghost" onclick={loadMore}>Load more</button></div>
         {/if}
       {:else}
-        <p class="muted empty">{filter === 'hidden' ? 'Nothing hidden.' : 'No uploads yet. Share the QR code to get started.'}</p>
+        <p class="muted empty">
+          {filter === 'hidden' ? 'Nothing hidden.' : filter === 'awaiting' ? 'Nothing waiting for approval.' : 'No uploads yet. Share the QR code to get started.'}
+        </p>
       {/if}
     </section>
 
@@ -437,7 +578,51 @@
     </section>
   </div>
 
-  <Lightbox items={visible} bind:index={open} />
+  <Lightbox {items} bind:index={open} />
+
+  <Modal bind:open={zipOpen} title="Download all">
+    {#if zipPhase === 'idle'}
+      <p class="muted" style="margin: 0">Saves every photo{zipVideos ? ' and video' : ''} as one ZIP file, straight from your Drive.</p>
+      <div>
+        <Toggle label="Include videos" hint="Videos can make the ZIP very large." bind:checked={zipVideos} />
+        {#if event.hidden || event.awaiting}
+          <Toggle label="Include hidden uploads" hint="Also those still waiting for approval." bind:checked={zipHidden} />
+        {/if}
+      </div>
+      {#if !streamsToDisk}
+        <p class="muted small" style="margin: 0">
+          This browser builds the ZIP in memory before saving. For large events, use Chrome or Edge on a computer, or download the Drive folder.
+        </p>
+      {/if}
+      <div class="row">
+        <button class="btn" onclick={downloadAll}><Icon name="download" size={16} /> Download</button>
+        <button class="btn ghost" onclick={closeZip}>Cancel</button>
+      </div>
+    {:else if zipRunning}
+      <p style="margin: 0">
+        {#if zipPhase === 'listing' || !zipProgress}
+          Getting the file list…
+        {:else}
+          {Math.min(zipProgress.done + 1, zipProgress.total)} of {plural(zipProgress.total, 'file')} · {mb(zipProgress.bytes)} of {mb(zipProgress.totalBytes)}
+        {/if}
+      </p>
+      <div class="zipbar"><span style="width: {zipPercent}%"></span></div>
+      <p class="muted small" style="margin: 0">Keep this tab open until it finishes.</p>
+      <div><button class="btn ghost" onclick={closeZip}>Cancel</button></div>
+    {:else if zipPhase === 'done' && zipResult}
+      <p style="margin: 0">
+        {zipResult.saved ? `Saved ${plural(zipResult.saved, 'file')}.` : 'Nothing to download.'}
+        {#if zipResult.failed}<span class="error-text">{plural(zipResult.failed, 'file')} couldn’t be downloaded.</span>{/if}
+      </p>
+      <div><button class="btn" onclick={closeZip}>Done</button></div>
+    {:else}
+      <p class="error-text" style="margin: 0">The download stopped. Check your connection and try again.</p>
+      <div class="row">
+        <button class="btn" onclick={downloadAll}>Try again</button>
+        <button class="btn ghost" onclick={closeZip}>Close</button>
+      </div>
+    {/if}
+  </Modal>
 
   <Modal bind:open={confirmDelete} title="Delete this event?">
     <p class="muted" style="margin: 0">All guest and admin links stop working and SnapWall forgets this event. Type the event name to confirm.</p>
@@ -549,7 +734,22 @@
     padding: 56px 0 24px;
   }
   .media-head {
+    margin-bottom: 14px;
+  }
+  .media-tabs {
     margin-bottom: 20px;
+  }
+  .zipbar {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--shade);
+    overflow: hidden;
+  }
+  .zipbar span {
+    display: block;
+    height: 100%;
+    background: var(--fg);
+    transition: width 0.2s;
   }
   .seg {
     display: inline-flex;
@@ -584,6 +784,9 @@
   }
   .mini:hover {
     background: rgba(0, 0, 0, 0.8);
+  }
+  .mini.approve {
+    background: var(--accent);
   }
   .empty {
     padding: 40px 0;

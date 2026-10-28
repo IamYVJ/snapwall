@@ -2,6 +2,7 @@ import type {
   AdminEvent,
   CreatedEvent,
   EventSettings,
+  MediaFilter,
   MediaItem,
   MediaPage,
   Me,
@@ -91,8 +92,16 @@ export function adminApi(eventId: string, adminToken: string | null) {
     update: (patch: EventPatch) => request<AdminEvent>(base, { method: 'PATCH', headers: headers(), json: patch }),
     rotate: (which: 'guest' | 'admin') => request<CreatedEvent>(`${base}/rotate`, { method: 'POST', headers: headers(), json: { which } }),
     remove: (trashFolder: boolean) => request(`${base}${trashFolder ? '?trash=1' : ''}`, { method: 'DELETE', headers: headers() }),
-    media: (cursor?: string | null) =>
-      request<MediaPage>(`${base}/media${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, { headers: headers() }),
+    media: (cursor?: string | null, filter: MediaFilter = 'all') => {
+      const q = new URLSearchParams();
+      if (cursor) q.set('cursor', cursor);
+      if (filter !== 'all') q.set('filter', filter);
+      const qs = q.toString();
+      return request<MediaPage>(`${base}/media${qs ? `?${qs}` : ''}`, { headers: headers() });
+    },
+    /** Approves the given uploads, or everything awaiting approval when no ids are given. */
+    approve: (ids?: string[]) =>
+      request<{ approved: number }>(`${base}/media/approve`, { method: 'POST', headers: headers(), json: ids ? { ids } : {} }),
     setHidden: (id: string, hidden: boolean) =>
       request<MediaItem>(`${base}/media/${id}`, { method: 'PATCH', headers: headers(), json: { hidden } }),
     removeMedia: (id: string) => request(`${base}/media/${id}`, { method: 'DELETE', headers: headers() }),

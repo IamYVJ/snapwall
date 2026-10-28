@@ -182,13 +182,13 @@ guest.post('/:token/uploads/:uid/complete', async (c) => {
     throw new HttpError(400, 'upload_mismatch');
   }
 
-  const hidden = settings.moderation ? 1 : 0;
+  const review = settings.moderation ? 1 : 0;
   await db.batch([
     db
-      .prepare(`UPDATE uploads SET file_id = ?, status = 'done', hidden = ?, size = ?, created_at = ? WHERE id = ?`)
-      .bind(file.id, hidden, Number(file.size ?? u.size), now(), u.id),
+      .prepare(`UPDATE uploads SET file_id = ?, status = 'done', hidden = ?, review = ?, size = ?, created_at = ? WHERE id = ?`)
+      .bind(file.id, review, review, Number(file.size ?? u.size), now(), u.id),
     bumpMedia(db, event.id),
   ]);
-  const done = { ...u, file_id: file.id, status: 'done' as const, hidden, created_at: now() };
+  const done = { ...u, file_id: file.id, status: 'done' as const, hidden: review, review, created_at: now() };
   return c.json(await toMediaItem(c, event, done, 'g', settings));
 });

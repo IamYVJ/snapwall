@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import type { EventSettings, MediaItem, MediaPage } from '../../shared/types';
+import type { EventSettings, MediaFilter, MediaItem, MediaPage } from '../../shared/types';
 import { sign, verify } from './crypto';
 import { driveFor } from './google';
 import { HttpError, now, parseSettings, type AppEnv, type Ctx, type EventRow, type OwnerRow, type UploadRow } from './util';
@@ -31,17 +31,26 @@ export async function toMediaItem(c: Ctx, event: EventRow, u: UploadRow, aud: Au
     uploader: u.uploader,
     createdAt: u.created_at,
     hidden: !!u.hidden,
+    awaiting: !!u.review,
     thumb: await mediaUrl(c, event.id, u.id, 'thumb', aud),
     full: await mediaUrl(c, event.id, u.id, 'full', aud),
     download: canDownload ? await mediaUrl(c, event.id, u.id, 'dl', aud) : null,
   };
 }
 
-export async function listMedia(c: Ctx, event: EventRow, aud: Audience, settings: EventSettings): Promise<MediaPage> {
+export async function listMedia(
+  c: Ctx,
+  event: EventRow,
+  aud: Audience,
+  settings: EventSettings,
+  filter: MediaFilter = 'all',
+): Promise<MediaPage> {
   const cursor = c.req.query('cursor');
   let sql = `SELECT * FROM uploads WHERE event_id = ? AND status = 'done'`;
   const args: (string | number)[] = [event.id];
   if (aud === 'g') sql += ' AND hidden = 0';
+  else if (filter === 'awaiting') sql += ' AND review = 1';
+  else if (filter === 'hidden') sql += ' AND hidden = 1 AND review = 0';
   if (cursor) {
     const [ts, id] = cursor.split('_');
     sql += ' AND (created_at < ? OR (created_at = ? AND id < ?))';
