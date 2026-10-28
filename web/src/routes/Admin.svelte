@@ -6,6 +6,7 @@
   import Lightbox from '../components/Lightbox.svelte';
   import MediaGrid from '../components/MediaGrid.svelte';
   import Modal from '../components/Modal.svelte';
+  import Poster from '../components/Poster.svelte';
   import QR from '../components/QR.svelte';
   import Toggle from '../components/Toggle.svelte';
   import Wordmark from '../components/Wordmark.svelte';
@@ -36,6 +37,7 @@
   let rotateOpen = $state(false);
   let pinModal = $state(false);
   let pinInput = $state('');
+  let posterOpen = $state(false);
 
   let poll: ReturnType<typeof setInterval> | undefined;
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
@@ -266,6 +268,7 @@
           <button class="btn" onclick={share}>Share link</button>
           <button class="btn ghost" onclick={() => copy(guestUrl, 'Guest link')}><Icon name="copy" size={16} /> Copy</button>
           <button class="btn ghost" onclick={downloadQr}><Icon name="download" size={16} /> QR</button>
+          <button class="btn ghost" onclick={() => (posterOpen = true)}>Poster</button>
         </div>
         <hr class="rule" />
         <div class="row small">
@@ -459,6 +462,8 @@
       <button class="btn ghost" onclick={() => (rotateOpen = false)}>Cancel</button>
     </div>
   </Modal>
+
+  <Poster bind:open={posterOpen} name={event.name} date={event.date} url={guestUrl} />
 
   <Modal bind:open={pinModal} title="Event PIN">
     <form class="stack" onsubmit={savePin}>

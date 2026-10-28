@@ -6,12 +6,15 @@
     <meta name="referrer" content="no-referrer" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' https://gc.zgo.at; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob: __API_ORIGIN__ https://yvj.goatcounter.com; media-src blob: __API_ORIGIN__; connect-src 'self' __API_ORIGIN__ https://www.googleapis.com https://yvj.goatcounter.com; object-src 'none'; base-uri 'self'; form-action 'self'"
+      content="default-src 'self'; script-src 'self' https://gc.zgo.at; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob: __API_ORIGIN__ https://yvj.goatcounter.com; media-src blob: __API_ORIGIN__; connect-src 'self' __API_ORIGIN__ https://www.googleapis.com https://yvj.goatcounter.com; manifest-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'"
     />
     <meta name="description" content="SnapWall — collect every photo and video from your event, straight into your own Google Drive." />
     <meta name="theme-color" content="#faf9f7" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0e0e0d" media="(prefers-color-scheme: dark)" />
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-title" content="SnapWall" />
     <title>SnapWall</title>
   </head>
   <body>

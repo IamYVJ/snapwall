@@ -113,6 +113,27 @@ export function guestApi(token: string, pin: () => string | null) {
       request<UploadSlot>(`${base}/uploads`, { method: 'POST', headers: headers(), json: body }),
     completeUpload: (uploadId: string, fileId: string) =>
       request<MediaItem>(`${base}/uploads/${uploadId}/complete`, { method: 'POST', headers: headers(), json: { fileId } }),
+    /**
+     * Reads one server-sent event stream until the server ends it (about a minute), passing each message on:
+     * the event's media version, or "closed". Uses fetch rather than EventSource so the PIN header can be sent.
+     */
+    live: async (onMessage: (data: string) => void, signal: AbortSignal) => {
+      const res = await fetch(`${API_URL}${base}/live`, { headers: headers(), signal, referrerPolicy: 'no-referrer' });
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => ({}));
+        throw new ApiError(res.status, data.error ?? 'error', data.message ?? 'Something went wrong');
+      }
+      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buffer = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        buffer += value;
+        const messages = buffer.split('\n\n');
+        buffer = messages.pop() ?? '';
+        for (const m of messages) for (const line of m.split('\n')) if (line.startsWith('data:')) onMessage(line.slice(5).trim());
+      }
+    },
   };
 }
 

@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { streamSSE } from 'hono/streaming';
 import { IMAGE_TYPES, VIDEO_TYPES, type EventSettings, type PublicEvent, type UploadSlot } from '../../shared/types';
 import { randomToken, sha256 } from './crypto';
 import { pinHash } from './events';
@@ -6,6 +7,7 @@ import { driveFor } from './google';
 import { listMedia, toMediaItem } from './media';
 import {
   HttpError,
+  bumpMedia,
   cleanText,
   now,
   parseSettings,
@@ -73,6 +75,38 @@ guest.get('/:token/media', async (c) => {
   const { event, settings } = await guestEvent(c);
   if (!settings.guestView) throw new HttpError(403, 'view_disabled', 'The host has made this an upload-only event');
   return c.json(await listMedia(c, event, 'g', settings));
+});
+
+// A free Worker request may run 50 D1 queries, so each stream checks for a minute and the client reconnects.
+const LIVE_EVERY_MS = 1500;
+const LIVE_CHECKS = 40;
+
+/**
+ * Server-sent events for the slideshow: sends the event's media version on connect and whenever it changes,
+ * and "closed" if the event is disabled or deleted. The client then refetches the media list itself.
+ */
+guest.get('/:token/live', async (c) => {
+  const { event, settings } = await guestEvent(c);
+  if (!settings.guestView) throw new HttpError(403, 'view_disabled', 'The host has made this an upload-only event');
+  c.header('Cache-Control', 'no-store');
+  return streamSSE(c, async (s) => {
+    let version = event.media_version;
+    await s.writeSSE({ data: String(version) });
+    for (let i = 0; i < LIVE_CHECKS && !s.aborted; i++) {
+      await s.sleep(LIVE_EVERY_MS);
+      const row = await c.env.DB.prepare('SELECT status, media_version FROM events WHERE id = ?')
+        .bind(event.id)
+        .first<Pick<EventRow, 'status' | 'media_version'>>();
+      if (!row || row.status !== 'active') {
+        await s.writeSSE({ data: 'closed' });
+        return;
+      }
+      if (row.media_version !== version) {
+        version = row.media_version;
+        await s.writeSSE({ data: String(version) });
+      }
+    }
+  });
 });
 
 guest.post('/:token/uploads', async (c) => {
@@ -149,10 +183,12 @@ guest.post('/:token/uploads/:uid/complete', async (c) => {
   }
 
   const hidden = settings.moderation ? 1 : 0;
-  await db
-    .prepare(`UPDATE uploads SET file_id = ?, status = 'done', hidden = ?, size = ?, created_at = ? WHERE id = ?`)
-    .bind(file.id, hidden, Number(file.size ?? u.size), now(), u.id)
-    .run();
+  await db.batch([
+    db
+      .prepare(`UPDATE uploads SET file_id = ?, status = 'done', hidden = ?, size = ?, created_at = ? WHERE id = ?`)
+      .bind(file.id, hidden, Number(file.size ?? u.size), now(), u.id),
+    bumpMedia(db, event.id),
+  ]);
   const done = { ...u, file_id: file.id, status: 'done' as const, hidden, created_at: now() };
   return c.json(await toMediaItem(c, event, done, 'g', settings));
 });

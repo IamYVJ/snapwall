@@ -16,6 +16,8 @@
   }
   const api = guestApi(token, () => pin);
   const SLIDE_MS = 6000;
+  // A new photo cuts in as soon as it has loaded, but never before the current one has been up this long.
+  const MIN_SHOW_MS = 1500;
 
   let event = $state<PublicEvent | null>(null);
   let items = $state<MediaItem[]>([]);
@@ -28,27 +30,114 @@
   const guestUrl = pageUrl(`e/${token}`);
 
   let timer: ReturnType<typeof setInterval> | undefined;
-  let poll: ReturnType<typeof setInterval> | undefined;
+  let shownAt = Date.now();
+  const live = new AbortController();
 
   function advance() {
     if (!photos.length) return;
     const nextId = queue.shift();
     const i = nextId ? photos.findIndex((p) => p.id === nextId) : -1;
     index = i >= 0 ? i : (index + 1) % photos.length;
+    shownAt = Date.now();
     // Warm the next image so the crossfade never shows a blank frame.
     const upcoming = photos[(index + 1) % photos.length];
     if (upcoming) new Image().src = upcoming.full;
   }
 
+  function startTimer() {
+    clearInterval(timer);
+    timer = setInterval(advance, SLIDE_MS);
+  }
+
+  /** Shows the first queued photo once it has decoded, then restarts the regular rhythm from it. */
+  async function cutToNew() {
+    const id = queue[0];
+    const item = photos.find((p) => p.id === id);
+    if (!item) return;
+    const img = new Image();
+    img.src = item.full;
+    await img.decode().catch(() => undefined);
+    setTimeout(
+      () => {
+        if (queue[0] !== id) return;
+        advance();
+        startTimer();
+      },
+      Math.max(0, shownAt + MIN_SHOW_MS - Date.now()),
+    );
+  }
+
+  function closedMessage(err: unknown): string | null {
+    if (!(err instanceof ApiError)) return null;
+    if (err.code === 'event_disabled' || err.code === 'event_not_found') return 'This event is closed.';
+    if (err.code === 'view_disabled') return 'Slideshow is off for this event.';
+    if (err.status === 401) return err.message;
+    return null;
+  }
+
+  let refreshing = false;
+  let again = false;
   async function refresh() {
+    if (refreshing) {
+      again = true;
+      return;
+    }
+    refreshing = true;
     try {
       const page = await api.media();
       const known = new Set(items.map((i) => i.id));
-      for (const item of page.items) if (!known.has(item.id) && !isVideo(item.mime)) queue.push(item.id);
-      const older = items.filter((i) => !page.items.some((p) => p.id === i.id));
+      const fresh = page.items.filter((i) => !known.has(i.id) && !isVideo(i.mime)).map((i) => i.id);
+      // Items newer than the end of this page but missing from it were hidden or deleted.
+      const pageIds = new Set(page.items.map((i) => i.id));
+      const oldest = page.items.at(-1)?.createdAt ?? Infinity;
+      const older = items.filter((i) => !pageIds.has(i.id) && i.createdAt < oldest);
+      const keep = current?.id;
       items = [...page.items, ...older];
+      // Keep the current photo on screen even though its position in the list moved.
+      const at = keep ? photos.findIndex((p) => p.id === keep) : -1;
+      if (at >= 0) index = at;
+      queue = [...queue.filter((id) => photos.some((p) => p.id === id)), ...fresh];
+      if (fresh.length) void cutToNew();
     } catch (err) {
-      if (err instanceof ApiError && (err.code === 'event_disabled' || err.code === 'event_not_found')) error = 'This event is closed.';
+      error = closedMessage(err) ?? error;
+    } finally {
+      refreshing = false;
+      if (again) {
+        again = false;
+        void refresh();
+      }
+    }
+  }
+
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  /** Keeps a live stream open; every version change refetches the media list. Falls back to polling. */
+  async function listen() {
+    let seen: string | null = null;
+    while (!live.signal.aborted && !error) {
+      const started = Date.now();
+      try {
+        await api.live((data) => {
+          if (data === 'closed') error = 'This event is closed.';
+          else if (data !== seen) {
+            // Also runs on the first message, to catch anything that arrived between the initial load and connecting.
+            seen = data;
+            void refresh();
+          }
+        }, live.signal);
+      } catch (err) {
+        if (live.signal.aborted) return;
+        const closed = closedMessage(err);
+        if (closed) {
+          error = closed;
+          return;
+        }
+        await refresh();
+        await sleep(15_000);
+        continue;
+      }
+      // Don't spin if a stream ends right away.
+      if (Date.now() - started < 5000) await sleep(5000);
     }
   }
 
@@ -61,8 +150,8 @@
       }
       const first = await api.media();
       items = first.items;
-      timer = setInterval(advance, SLIDE_MS);
-      poll = setInterval(refresh, 15_000);
+      startTimer();
+      void listen();
     } catch (err) {
       error = err instanceof ApiError ? err.message : 'Could not load the event.';
     }
@@ -70,7 +159,7 @@
 
   onDestroy(() => {
     clearInterval(timer);
-    clearInterval(poll);
+    live.abort();
   });
 
   function fullscreen() {

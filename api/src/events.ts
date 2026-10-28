@@ -7,6 +7,7 @@ import { listMedia, toMediaItem } from './media';
 import {
   DEFAULT_SETTINGS,
   HttpError,
+  bumpMedia,
   cleanDate,
   cleanText,
   mergeSettings,
@@ -150,6 +151,8 @@ events.patch('/:id', async (c) => {
   }
 
   if (sets.length) {
+    // Settings, status or PIN changes can change what the slideshow may show.
+    sets.push('media_version = media_version + 1');
     await c.env.DB.prepare(`UPDATE events SET ${sets.join(', ')} WHERE id = ?`)
       .bind(...args, event.id)
       .run();
@@ -212,7 +215,8 @@ events.patch('/:id/media/:mid', async (c) => {
   const u = await findUpload(c, event);
   const { hidden } = await readJson<{ hidden?: boolean }>(c);
   if (typeof hidden !== 'boolean') throw new HttpError(400, 'bad_hidden');
-  await c.env.DB.prepare('UPDATE uploads SET hidden = ? WHERE id = ?').bind(hidden ? 1 : 0, u.id).run();
+  const db = c.env.DB;
+  await db.batch([db.prepare('UPDATE uploads SET hidden = ? WHERE id = ?').bind(hidden ? 1 : 0, u.id), bumpMedia(db, event.id)]);
   u.hidden = hidden ? 1 : 0;
   return c.json(await toMediaItem(c, event, u, 'a', parseSettings(event.settings)));
 });
@@ -225,6 +229,7 @@ events.delete('/:id/media/:mid', async (c) => {
   await drive.trash(u.file_id!).catch((err) => {
     if (!(err instanceof HttpError && err.code === 'drive_not_found')) throw err;
   });
-  await c.env.DB.prepare('DELETE FROM uploads WHERE id = ?').bind(u.id).run();
+  const db = c.env.DB;
+  await db.batch([db.prepare('DELETE FROM uploads WHERE id = ?').bind(u.id), bumpMedia(db, event.id)]);
   return c.json({ ok: true });
 });

@@ -30,6 +30,10 @@ export class HttpError extends Error {
 
 export const now = () => Math.floor(Date.now() / 1000);
 
+/** Tells open slideshows that the event's media changed. */
+export const bumpMedia = (db: D1Database, eventId: string) =>
+  db.prepare('UPDATE events SET media_version = media_version + 1 WHERE id = ?').bind(eventId);
+
 export interface OwnerRow {
   id: string;
   google_sub: string;
@@ -54,6 +58,7 @@ export interface EventRow {
   admin_hash: string;
   pin_hash: string | null;
   settings: string;
+  media_version: number;
   created_at: number;
 }
 

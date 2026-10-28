@@ -9,7 +9,8 @@
   import Modal from '../components/Modal.svelte';
   import { ApiError, guestApi } from '../lib/api';
   import { formatDate, plural, saveBlob } from '../lib/format';
-  import { href } from '../lib/router.svelte';
+  import { eventManifest, install } from '../lib/install.svelte';
+import { href } from '../lib/router.svelte';
   import { mimeOf, uploadFile } from '../lib/upload';
 
   let { token }: { token: string } = $props();
@@ -68,6 +69,12 @@
   let zipping = $state(false);
 
   let poll: ReturnType<typeof setInterval> | undefined;
+  let installHelp = $state(false);
+
+  // Installing from this page saves the event itself to the home screen, under its own name.
+  $effect(() => {
+    if (event) return eventManifest(event.name);
+  });
   let sentinel = $state<HTMLElement>();
 
   const accept = $derived(event?.settings.allowVideo ? 'image/*,video/*' : 'image/*');
@@ -331,6 +338,11 @@
     <header class="top row">
       <span class="brand">Snap<em>Wall</em></span>
       <span class="spacer"></span>
+      {#if install.canPrompt}
+        <button class="btn ghost sm" onclick={() => install.prompt()}><Icon name="phone" size={16} /><span class="wide-only">Add to home screen</span><span class="narrow-only">Install</span></button>
+      {:else if install.manual}
+        <button class="btn ghost sm" onclick={() => (installHelp = true)}><Icon name="phone" size={16} /><span class="wide-only">Add to home screen</span><span class="narrow-only">Install</span></button>
+      {/if}
       {#if event.settings.guestView && items.length}
         <a class="btn ghost sm" href={href(`e/${token}/show`)}><Icon name="slideshow" size={16} /> Slideshow</a>
       {/if}
@@ -426,6 +438,15 @@
 
   <Lightbox {items} bind:index={open} />
 
+  <Modal bind:open={installHelp} title="Add to home screen">
+    <ol class="install-steps">
+      <li>Tap <Icon name="share" size={18} /> <strong>Share</strong> in Safari’s toolbar.</li>
+      <li>Scroll down and choose <strong>Add to Home Screen</strong>.</li>
+      <li>Tap <strong>Add</strong>. The event opens straight from its icon.</li>
+    </ol>
+    <div><button class="btn" onclick={() => (installHelp = false)}>Done</button></div>
+  </Modal>
+
   <Modal bind:open={askName} title={event.settings.requireName ? 'Your name' : 'Add your name?'}>
     <p class="muted" style="margin: 0">
       {event.settings.requireName ? 'The host asks guests to add a name to their uploads.' : 'So the host knows who shared these. You can skip this.'}
@@ -441,6 +462,30 @@
 {/if}
 
 <style>
+  @media (max-width: 520px) {
+    .wide-only {
+      display: none;
+    }
+  }
+  @media (min-width: 521px) {
+    .narrow-only {
+      display: none;
+    }
+  }
+  .install-steps {
+    margin: 0;
+    padding-left: 20px;
+    color: var(--muted);
+    display: grid;
+    gap: 10px;
+  }
+  .install-steps :global(svg) {
+    vertical-align: -3px;
+  }
+  .install-steps strong {
+    color: var(--fg);
+    font-weight: 600;
+  }
   .wall {
     padding-bottom: 140px;
   }
