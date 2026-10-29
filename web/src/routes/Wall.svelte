@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from 'svelte';
   import type { GuestCount, MediaItem, PublicEvent } from '../../../shared/types';
   import { IMAGE_TYPES, VIDEO_TYPES } from '../../../shared/types';
+  import FindMe from '../components/FindMe.svelte';
   import GuestFilter from '../components/GuestFilter.svelte';
   import Icon from '../components/Icon.svelte';
   import Lightbox from '../components/Lightbox.svelte';
@@ -58,6 +59,10 @@
   let open = $state<number | null>(null);
   let guests = $state<GuestCount[]>([]);
   let by = $state<string | null>(null);
+  let findOpen = $state(false);
+  /** Photos Find me matched, shown instead of the whole wall until the guest goes back. */
+  let matches = $state<MediaItem[] | null>(null);
+  const shown = $derived(matches ?? items);
 
   let jobs = $state<Job[]>([]);
   let sheetOpen = $state(false);
@@ -176,6 +181,25 @@
     } catch {
       /* the next refresh tries again */
     }
+  }
+
+  /** Every item on the wall, page by page, for Find me. */
+  async function allMedia(): Promise<MediaItem[]> {
+    const all: MediaItem[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await api.media(cursor);
+      all.push(...page.items);
+      cursor = page.next;
+    } while (cursor);
+    return all;
+  }
+
+  function showMatches(found: MediaItem[] | null) {
+    matches = found;
+    open = null;
+    selected = new Set();
+    if (found) window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   async function submitPin(e: SubmitEvent) {
@@ -306,7 +330,7 @@
   }
 
   async function downloadSelected() {
-    const chosen = items.filter((i) => selected.has(i.id) && i.download);
+    const chosen = shown.filter((i) => selected.has(i.id) && i.download);
     if (!chosen.length) return;
     if (chosen.length === 1) {
       location.href = chosen[0].download!;
@@ -330,7 +354,7 @@
   }
 
   $effect(() => {
-    if (!sentinel) return;
+    if (!sentinel || matches) return;
     const io = new IntersectionObserver((entries) => entries[0].isIntersecting && loadMore(), { rootMargin: '800px' });
     io.observe(sentinel);
     return () => io.disconnect();
@@ -407,6 +431,9 @@
       {#if event.settings.guestView}
         <p class="muted">{event.count ? plural(event.count, 'moment') + ' shared' : 'Be the first to share a moment.'}</p>
       {/if}
+      {#if event.settings.faceSearch && items.length && !matches}
+        <div><button class="btn ghost sm" onclick={() => (findOpen = true)}><Icon name="face" size={16} /> Find photos of me</button></div>
+      {/if}
     </section>
 
     {#if !event.settings.uploadsOpen}
@@ -434,10 +461,19 @@
     {/if}
 
     {#if event.settings.guestView}
-      <GuestFilter {guests} value={by} onchange={showGuest} />
-      {#if items.length}
-        <MediaGrid {items} onopen={(i) => (open = i)} {selecting} {selected} ontoggle={toggle} names />
-        <div bind:this={sentinel} class="sentinel">{#if loadingMore}<div class="spinner"></div>{/if}</div>
+      {#if matches}
+        <div class="found row small">
+          <span><strong>You’re in {plural(matches.length, 'photo')}.</strong> <span class="muted">Found on this phone.</span></span>
+          <span class="spacer"></span>
+          <button class="link" onclick={() => (findOpen = true)}>Try another photo</button>
+          <button class="link" onclick={() => showMatches(null)}>Show everyone</button>
+        </div>
+      {:else}
+        <GuestFilter {guests} value={by} onchange={showGuest} />
+      {/if}
+      {#if shown.length}
+        <MediaGrid items={shown} onopen={(i) => (open = i)} {selecting} {selected} ontoggle={toggle} names />
+        {#if !matches}<div bind:this={sentinel} class="sentinel">{#if loadingMore}<div class="spinner"></div>{/if}</div>{/if}
       {:else}
         <div class="empty">
           <p class="title italic muted">The wall is empty.</p>
@@ -508,13 +544,17 @@
       {#if event.settings.uploadsOpen}
         <button class="btn accent lg" onclick={pick} disabled={atLimit}><Icon name="plus" size={20} /> Add photos</button>
       {/if}
-      {#if event.settings.guestDownload && items.length}
+      {#if event.settings.guestDownload && shown.length}
         <button class="btn ghost" onclick={() => (selecting = true)}>Select</button>
       {/if}
     {/if}
   </nav>
 
-  <Lightbox {items} bind:index={open} />
+  <Lightbox items={shown} bind:index={open} />
+
+  {#if event.settings.faceSearch}
+    <FindMe bind:open={findOpen} list={allMedia} onmatches={showMatches} />
+  {/if}
 
   <Modal bind:open={installHelp} title="Add to home screen">
     <ol class="install-steps">
@@ -585,6 +625,14 @@
   }
   .notice {
     margin: 0 0 24px;
+  }
+  .found {
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    padding: 12px 16px;
+    margin-bottom: 14px;
+    border-radius: 14px;
+    background: var(--shade);
   }
   .empty {
     padding: 64px 0;

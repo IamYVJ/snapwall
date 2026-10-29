@@ -46,6 +46,13 @@
     upload page says which applies.
   </p>
 
+  <h2 class="h2">Find me</h2>
+  <p>
+    If the host turns it on, guests can find the photos they’re in with a selfie. The matching happens on the guest’s own device: the selfie and
+    the faces in the event’s photos are never sent to SnapWall or anyone else, and are forgotten when the page is closed. SnapWall stores no face
+    data of any kind.
+  </p>
+
   <h2 class="h2">Removing your data</h2>
   <p>
     Deleting an event removes it from SnapWall, and optionally moves its Drive folder to your trash. “Disconnect Google” on your dashboard revokes

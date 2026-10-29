@@ -439,6 +439,13 @@
             onchange={setting('stripLocation')}
             disabled={saving}
           />
+          <Toggle
+            label="Find me"
+            hint="Guests can find the photos they’re in with a selfie. Faces are matched on the guest’s own phone; nothing is sent or saved."
+            checked={event.settings.faceSearch}
+            onchange={setting('faceSearch')}
+            disabled={saving || !event.settings.guestView}
+          />
         </div>
 
         <div class="grid2">

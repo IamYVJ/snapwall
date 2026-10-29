@@ -62,6 +62,15 @@ describe('guest wall', () => {
     expect(item.awaiting).toBe(false);
   });
 
+  test('Find me is off unless the host turns it on, and needs the wall to be visible', async () => {
+    const off = await h.seedEvent();
+    expect((await h.call(`/g/${off.guestToken}`)).body.settings.faceSearch).toBe(false);
+    const on = await h.seedEvent({ settings: { faceSearch: true } });
+    expect((await h.call(`/g/${on.guestToken}`)).body.settings.faceSearch).toBe(true);
+    const hidden = await h.seedEvent({ settings: { faceSearch: true, guestView: false } });
+    expect((await h.call(`/g/${hidden.guestToken}`)).body.settings.faceSearch).toBe(false);
+  });
+
   test('filters by guest name, and the name list ignores hidden uploads', async () => {
     const e = await h.seedEvent();
     await h.seedUpload(e.id, { uploader: 'Rohan' });

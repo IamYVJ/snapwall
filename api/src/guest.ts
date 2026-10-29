@@ -96,6 +96,7 @@ guest.get('/:token', async (c) => {
       maxFileMB: settings.maxFileMB,
       requireName: settings.requireName,
       stripLocation: settings.stripLocation,
+      faceSearch: settings.guestView && settings.faceSearch,
       moderation: settings.moderation,
       guestMaxFiles: settings.guestMaxFiles,
       guestMaxMB: settings.guestMaxMB,

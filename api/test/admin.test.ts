@@ -59,6 +59,14 @@ describe('settings', () => {
     expect(r.body.settings).toMatchObject({ guestMaxFiles: null, guestMaxMB: 500 });
   });
 
+  test('the host can turn Find me on and off', async () => {
+    const e = await h.seedEvent();
+    const patch = (faceSearch: unknown) => h.call(`/events/${e.id}`, { method: 'PATCH', headers: e.admin, json: { settings: { faceSearch } } });
+    expect((await patch(true)).body.settings.faceSearch).toBe(true);
+    expect((await patch('yes')).body.settings.faceSearch).toBe(true);
+    expect((await patch(false)).body.settings.faceSearch).toBe(false);
+  });
+
   test('turning off the wall also turns off guest downloads', async () => {
     const e = await h.seedEvent();
     const r = await h.call(`/events/${e.id}`, { method: 'PATCH', headers: e.admin, json: { settings: { guestView: false } } });

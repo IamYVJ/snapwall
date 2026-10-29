@@ -19,6 +19,8 @@ export interface EventSettings {
   requireName: boolean;
   /** Remove GPS/EXIF metadata from photos in the browser before upload. */
   stripLocation: boolean;
+  /** Guests can find photos of themselves with a selfie, matched on their own device. Requires guestView. */
+  faceSearch: boolean;
   /** Unix seconds after which uploads close automatically. */
   expiresAt: number | null;
   /** Most files one guest may upload, or null for no limit. */
@@ -81,6 +83,7 @@ export interface PublicEvent {
     | 'maxFileMB'
     | 'requireName'
     | 'stripLocation'
+    | 'faceSearch'
     | 'moderation'
     | 'guestMaxFiles'
     | 'guestMaxMB'
