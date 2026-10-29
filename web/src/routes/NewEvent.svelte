@@ -12,6 +12,7 @@
   let allowVideo = $state(true);
   let moderation = $state(false);
   let requireName = $state(false);
+  let stripLocation = $state(true);
   let busy = $state(false);
   let error = $state('');
 
@@ -35,7 +36,7 @@
       const res = await owner.create({
         name: name.trim(),
         date: date || null,
-        settings: { guestView, guestDownload: guestView && guestDownload, allowVideo, moderation, requireName },
+        settings: { guestView, guestDownload: guestView && guestDownload, allowVideo, moderation, requireName, stripLocation },
       });
       go(`a/${res.event.id}/${res.adminToken}`, { replace: true });
     } catch (err) {
@@ -79,6 +80,15 @@
       <Toggle label="Upload videos" bind:checked={allowVideo} />
       <Toggle label="Must add their name" hint="Otherwise a name is optional." bind:checked={requireName} />
       <Toggle label="Wait for approval" hint="New uploads stay hidden until you approve them." bind:checked={moderation} />
+    </div>
+
+    <div>
+      <p class="eyebrow" style="margin-bottom: 4px">Privacy</p>
+      <Toggle
+        label="Remove location"
+        hint="Removes GPS location from photos and videos on the guest’s device before upload. Photos also lose camera details."
+        bind:checked={stripLocation}
+      />
     </div>
 
     <p class="muted small notice">

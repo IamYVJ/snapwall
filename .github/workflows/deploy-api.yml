@@ -29,5 +29,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check -w api
+      - run: npm run test -w api
       - run: npm run db:migrate:remote -w api
       - run: npm run deploy -w api

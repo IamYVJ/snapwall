@@ -26,6 +26,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check -w web
+      - run: npm run test -w web
       - run: npm run build -w web
         env:
           VITE_API_URL: ${{ vars.SNAPWALL_API_URL }}

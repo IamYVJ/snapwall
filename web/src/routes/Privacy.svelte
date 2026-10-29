@@ -13,6 +13,10 @@
     <li>Your Google access, encrypted, so guests can upload while you’re offline.</li>
     <li>Event details (name, date, settings) and a list of uploaded files: name, type, size, uploader’s name if given, and time.</li>
     <li>A salted hash of each uploader’s IP address, only to stop abuse. The address itself is never kept.</li>
+    <li>
+      A salted, per-event hash of a random ID your browser keeps for SnapWall, only to apply the host’s per-guest upload limits.
+      It can’t be linked to you or across events.
+    </li>
   </ul>
 
   <h2 class="h2">What we never store</h2>
@@ -36,7 +40,11 @@
   </p>
 
   <h2 class="h2">Location data</h2>
-  <p>By default, location and camera metadata are removed from JPEG and PNG photos on the guest’s device before upload.</p>
+  <p>
+    By default, location is removed on the guest’s device before upload, so it never reaches SnapWall or the host’s Drive. This covers photos
+    (JPEG, PNG, WebP, HEIC and AVIF, which also lose camera details) and videos (MP4 and MOV). The host can turn this off for an event, and the
+    upload page says which applies.
+  </p>
 
   <h2 class="h2">Removing your data</h2>
   <p>

@@ -20,13 +20,19 @@ GitHub Pages (web/)  ──JSON──▶  Cloudflare Worker + D1 (api/)  ──D
 | Viewing | Drive files are never shared publicly. The wall loads them through the Worker using HMAC-signed URLs that expire within an hour, and every request re-checks the event's live state (disabled, hidden item, view/download off). |
 | Links | Guest link (24 random bytes) and admin link (32 random bytes) are separate. Only their hashes are used for lookup; the admin link is shown once. Either can be replaced at any time. |
 | Tokens at rest | Google refresh/access tokens and guest tokens are AES-GCM encrypted with `TOKEN_KEY`. |
-| Location data | GPS/EXIF/XMP/IPTC is stripped from JPEG and PNG in the browser before upload (lossless, orientation kept). |
-| Abuse | Per-event, per-IP rate limits (the IP is kept only as a salted hash), type allowlist (no SVG/HTML), size limits, optional PIN, optional approval queue. |
+| Location data | Removed in the browser before upload, losslessly. JPEG, PNG and WebP lose EXIF/XMP/IPTC (JPEG orientation kept). HEIC/HEIF/AVIF and MP4/MOV address data by byte offset, so location is overwritten in place: the HEIF Exif item is cut to its orientation, video `©xyz`/`loci` boxes and Apple location keys are cleared, and XMP GPS and place fields are blanked. Hosts can turn this off per event. |
+| Abuse | Per-event, per-IP rate limits (the IP is kept only as a salted hash), optional per-guest file and storage limits (keyed by a random per-browser ID, kept only as a salted per-event hash), type allowlist (no SVG/HTML), size limits, optional PIN, optional approval queue. |
 | Analytics | Page loads are counted with GoatCounter (no cookies, no IP addresses kept). Only the path `/snapwall/` and a fixed title are sent; event names and link tokens never leave the browser. |
 | Removal | Disable an event (links show "closed"), delete it (optionally trashing the Drive folder), or disconnect Google, which revokes access and erases the account. |
 
+## Checks
+
+`npm run check` type-checks both packages and `npm test` runs the tests. The API tests run the real Worker against an in-memory local D1 with every migration applied, without calling Google. Both deploy workflows run these before deploying, and the Checks workflow runs them on pull requests and other branches.
+
 ## Known limits
 
-- HEIC and video files keep their embedded metadata (only JPEG/PNG are stripped). iOS usually converts photos to JPEG when uploading from Safari.
+- Location removal covers the standard places cameras and phones write it. Formats not listed (GIF, WebM, 3GP without ISO boxes) pass through unchanged, and a file whose structure can't be read is uploaded as it is.
 - Thumbnails are cached with the Cache API, which only works once the Worker has a custom domain; on `*.workers.dev` every thumbnail is fetched from Drive.
+- Per-guest limits count per browser, so a guest who clears their browser data or switches browsers starts again. They stop a guest filling the Drive by accident, not a determined one.
+- "Download all" writes the ZIP straight to disk in Chrome and Edge on desktop. Other browsers build it in memory first, which can fail for very large events; downloading the Drive folder works everywhere.
 - Large or heavily watched videos stream through the Worker. For very big events, consider keeping guest download on and the slideshow photo-only (it already skips videos).

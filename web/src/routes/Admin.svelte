@@ -430,8 +430,8 @@
           />
           <Toggle label="Require guest names" checked={event.settings.requireName} onchange={setting('requireName')} disabled={saving} />
           <Toggle
-            label="Remove photo location"
-            hint="Strips GPS and camera data from JPEG and PNG on the guest’s device."
+            label="Remove location"
+            hint="Removes GPS location from photos and videos on the guest’s device before upload. Photos also lose camera details."
             checked={event.settings.stripLocation}
             onchange={setting('stripLocation')}
             disabled={saving}

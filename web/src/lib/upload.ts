@@ -83,7 +83,7 @@ export async function uploadFile(
   onProgress: (fraction: number) => void,
 ): Promise<MediaItem> {
   const mime = mimeOf(file);
-  const prepared = opts.stripLocation ? await stripMetadata(file) : file;
+  const prepared = opts.stripLocation ? await stripMetadata(file, mime) : file;
   const slot = await api.startUpload({ name: file.name, size: prepared.size, mime, uploader: opts.uploader });
   const fileId = await sendToDrive(slot.uploadUrl, prepared, mime, onProgress);
   return api.completeUpload(slot.uploadId, fileId);

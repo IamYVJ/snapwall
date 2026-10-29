@@ -131,7 +131,7 @@
         <article>
           <span class="num">02</span>
           <h2 class="h2">Private by default</h2>
-          <p class="muted">Unguessable links, nothing made public in Drive, and location data removed from photos before upload.</p>
+          <p class="muted">Unguessable links, nothing made public in Drive, and location removed from photos and videos before upload.</p>
         </article>
         <article>
           <span class="num">03</span>

@@ -443,7 +443,9 @@
     {/if}
 
     <footer class="foot small muted">
-      Photos are saved to the host’s own Google Drive. <a href="#/privacy">Privacy</a>
+      Photos are saved to the host’s own Google Drive.
+      {event.settings.stripLocation ? 'Location is removed from your photos and videos before they’re sent.' : 'Location data in your files is kept.'}
+      <a href="#/privacy">Privacy</a>
     </footer>
   </div>
 
