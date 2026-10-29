@@ -1,5 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
-import { startHarness, type Harness } from './harness';
+import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
+import { driveJson, fakeDrive, startHarness, type Harness } from './harness';
 
 let h: Harness;
 beforeAll(async () => (h = await startHarness()));
@@ -171,5 +171,24 @@ describe('deleting', () => {
     expect((await h.call(`/events/${e.id}`, { method: 'DELETE', headers: e.admin })).status).toBe(200);
     expect((await h.call(`/g/${e.guestToken}`)).status).toBe(404);
     expect(await h.env.DB.prepare('SELECT COUNT(*) AS n FROM uploads').first('n')).toBe(0);
+  });
+});
+
+describe('Drive space', () => {
+  test('the event page can ask how full the Drive is', async () => {
+    const e = await h.seedEvent({ drive: true });
+    fakeDrive(() => driveJson({ storageQuota: { limit: '16106127360', usage: '15000000000' } }));
+    try {
+      const r = await h.call(`/events/${e.id}/storage`, { headers: e.admin });
+      expect(r.body).toEqual({ limit: 16106127360, usage: 15000000000 });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('needs admin access', async () => {
+    const e = await h.seedEvent({ drive: true });
+    expect((await h.call(`/events/${e.id}/storage`)).body.error).toBe('signin_required');
+    expect((await h.call('/me/storage')).body.error).toBe('signin_required');
   });
 });

@@ -1,3 +1,4 @@
+import type { DriveStorage } from '../../shared/types';
 import { decrypt, encrypt } from './crypto';
 import { HttpError, now, type Env, type OwnerRow } from './util';
 
@@ -101,6 +102,8 @@ export async function accessTokenFor(env: Env, owner: OwnerRow): Promise<string>
   return tok.access_token;
 }
 
+export const STORAGE_FULL = 'The host’s Google Drive is full, so uploads can’t be saved right now. Let the host know.';
+
 export interface DriveFile {
   id: string;
   name?: string;
@@ -112,26 +115,73 @@ export interface DriveFile {
   thumbnailLink?: string;
 }
 
+/** Waits before each retry of a throttled or failed Drive call. Kept short so a guest's request stays under ~6 s. */
+export const RETRY_DELAYS_MS = [500, 1500, 3500];
+const MAX_RETRY_AFTER_MS = 5000;
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+async function errorReason(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: { errors?: { reason?: string }[]; message?: string } };
+    return body.error?.errors?.[0]?.reason ?? body.error?.message ?? '';
+  } catch {
+    return ''; // not JSON
+  }
+}
+
+/** Drive's "slow down" answers: 429, or 403 with a rate-limit reason such as userRateLimitExceeded. */
+const isRateLimit = (status: number, reason: string) => status === 429 || (status === 403 && /rate/i.test(reason));
+
+/** Honours Retry-After when Drive sends one, otherwise backs off with jitter so many guests don't retry in step. */
+function retryDelay(res: Response | null, attempt: number): number {
+  const after = Number(res?.headers.get('Retry-After'));
+  if (after > 0) return Math.min(after * 1000, MAX_RETRY_AFTER_MS);
+  const base = RETRY_DELAYS_MS[attempt];
+  return base / 2 + Math.random() * base;
+}
+
 export class Drive {
-  constructor(private token: string) {}
+  constructor(
+    private token: string,
+    private wait: (ms: number) => Promise<void> = sleep,
+  ) {}
 
   private async call(url: string, init: RequestInit = {}): Promise<Response> {
     const headers = new Headers(init.headers);
     headers.set('Authorization', `Bearer ${this.token}`);
-    const res = await fetch(url, { ...init, headers });
-    if (res.ok || res.status === 206) return res;
-    let reason = '';
-    try {
-      const body = (await res.json()) as { error?: { errors?: { reason?: string }[]; message?: string } };
-      reason = body.error?.errors?.[0]?.reason ?? body.error?.message ?? '';
-    } catch {
-      /* not JSON */
+    // A rate-limited request was never carried out, so any request may repeat it. After a server error or a dropped
+    // connection it may have been, so only reads and the idempotent trash PATCH retry (a POST could add a folder twice).
+    const repeatable = !init.method || init.method === 'GET' || init.method === 'PATCH';
+    for (let attempt = 0; ; attempt++) {
+      const last = attempt === RETRY_DELAYS_MS.length;
+      let res: Response;
+      try {
+        res = await fetch(url, { ...init, headers });
+      } catch {
+        if (last || !repeatable) throw new HttpError(502, 'drive_error', "Couldn't reach Google Drive");
+        await this.wait(retryDelay(null, attempt));
+        continue;
+      }
+      if (res.ok || res.status === 206) return res;
+      const reason = await errorReason(res);
+      if (!last && (isRateLimit(res.status, reason) || (repeatable && res.status >= 500))) {
+        await this.wait(retryDelay(res, attempt));
+        continue;
+      }
+      if (res.status === 404) throw new HttpError(404, 'drive_not_found', 'File no longer exists in Drive');
+      if (res.status === 401) throw new HttpError(409, 'drive_disconnected', 'Google Drive access expired');
+      if (reason === 'storageQuotaExceeded') throw new HttpError(507, 'storage_full', STORAGE_FULL);
+      if (isRateLimit(res.status, reason)) throw new HttpError(429, 'drive_rate_limited', 'Google Drive is busy. Trying again shortly.');
+      throw new HttpError(502, 'drive_error', reason || `Drive returned ${res.status}`);
     }
-    if (res.status === 404) throw new HttpError(404, 'drive_not_found', 'File no longer exists in Drive');
-    if (res.status === 401) throw new HttpError(409, 'drive_disconnected', 'Google Drive access expired');
-    if (reason === 'storageQuotaExceeded') throw new HttpError(507, 'storage_full', "The host's Drive is full");
-    if (res.status === 403 && /rate/i.test(reason)) throw new HttpError(429, 'drive_rate_limited', 'Drive is busy, try again shortly');
-    throw new HttpError(502, 'drive_error', reason || `Drive returned ${res.status}`);
+  }
+
+  /** How full the owner's Drive is. Works with the drive.file scope. */
+  async storage(): Promise<DriveStorage> {
+    const res = await this.call(`${DRIVE}/about?fields=storageQuota`);
+    const { storageQuota: q } = (await res.json()) as { storageQuota?: { limit?: string; usage?: string } };
+    return { limit: q?.limit ? Number(q.limit) : null, usage: Number(q?.usage ?? 0) };
   }
 
   async createFolder(name: string, parent?: string): Promise<string> {

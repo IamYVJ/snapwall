@@ -1,3 +1,5 @@
+import type { DriveStorage } from '../../../shared/types';
+
 export function formatDate(date: string | null): string {
   if (!date) return '';
   const d = new Date(`${date}T00:00:00`);
@@ -40,3 +42,21 @@ export function sizeLabel(mb: number): string {
 }
 
 export const isVideo = (mime: string) => mime.startsWith('video/');
+
+/** Drive's own units: "15 GB" is 15 GiB, so use powers of 1024 to match what Google shows the host. */
+export function bytesLabel(bytes: number): string {
+  const gb = bytes / 2 ** 30;
+  return gb >= 1 ? `${+gb.toFixed(1)} GB` : `${Math.max(0, Math.floor(bytes / 2 ** 20))} MB`;
+}
+
+/** Under this much free space, a phone video or two can no longer be saved. */
+const FULL_BYTES = 100 * 2 ** 20;
+const LOW_BYTES = 2 * 2 ** 30;
+
+/** Whether the host should be warned about Drive space: "full", "low", or null when there's room (or no limit). */
+export function driveSpace(s: DriveStorage): { level: 'full' | 'low'; free: string; total: string } | null {
+  if (s.limit === null || s.limit <= 0) return null;
+  const free = s.limit - s.usage;
+  if (free >= LOW_BYTES && s.usage / s.limit < 0.9) return null;
+  return { level: free < FULL_BYTES ? 'full' : 'low', free: bytesLabel(free), total: bytesLabel(s.limit) };
+}

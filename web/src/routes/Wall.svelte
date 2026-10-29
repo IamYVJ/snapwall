@@ -11,7 +11,7 @@
   import { formatDate, plural, sizeLabel } from '../lib/format';
   import { eventManifest, install } from '../lib/install.svelte';
   import { href } from '../lib/router.svelte';
-  import { mimeOf, uploadFile } from '../lib/upload';
+  import { canRetry, mimeOf, uploadFile } from '../lib/upload';
   import { zipMedia } from '../lib/zip';
 
   let { token }: { token: string } = $props();
@@ -21,7 +21,10 @@
     file: File;
     status: 'waiting' | 'uploading' | 'done' | 'error';
     progress: number;
+    /** Drive is busy and the upload will try again by itself. */
+    paused?: boolean;
     error?: string;
+    canRetry?: boolean;
   }
 
   const pinKey = `snapwall.pin.${token}`;
@@ -255,7 +258,7 @@
       const item = await uploadFile(
         api,
         job.file,
-        { uploader: uploader.trim() || null, stripLocation: event.settings.stripLocation },
+        { uploader: uploader.trim() || null, stripLocation: event.settings.stripLocation, onWait: (w) => (job.paused = w) },
         (p) => (job.progress = p),
       );
       job.status = 'done';
@@ -267,7 +270,18 @@
       }
     } catch (err) {
       job.status = 'error';
+      job.paused = false;
       job.error = err instanceof ApiError ? err.message : 'Upload failed';
+      job.canRetry = canRetry(err);
+      // Nothing else can be saved either, so don't make every queued file fail one by one.
+      if (err instanceof ApiError && err.code === 'storage_full') {
+        for (const j of jobs) {
+          if (j.status !== 'waiting') continue;
+          j.status = 'error';
+          j.error = 'Not sent: the host’s Drive is full';
+          j.canRetry = true;
+        }
+      }
     }
   }
 
@@ -275,6 +289,7 @@
     job.status = 'waiting';
     job.progress = 0;
     job.error = undefined;
+    job.canRetry = false;
     pump();
   }
 
@@ -467,7 +482,9 @@
               <span class="ok"><Icon name="check" size={16} stroke={2.2} /></span>
             {:else if job.status === 'error'}
               <span class="error-text small">{job.error}</span>
-              {#if job.error === 'Upload failed' || job.error?.includes('connection')}<button class="link" onclick={() => retry(job)}>Retry</button>{/if}
+              {#if job.canRetry}<button class="link" onclick={() => retry(job)}>Retry</button>{/if}
+            {:else if job.paused}
+              <span class="muted small">Drive is busy, retrying…</span>
             {:else}
               <span class="muted small">{Math.round(job.progress * 100)}%</span>
             {/if}

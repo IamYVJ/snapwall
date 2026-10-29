@@ -1,6 +1,8 @@
 // Runs the real Worker in Node against an in-memory local D1 with every migration applied. Google is never called:
-// tests stop at checks that run before Drive, and owners have no Drive tokens (Drive calls answer drive_disconnected).
+// tests stop at checks that run before Drive, and owners have no Drive tokens (Drive calls answer drive_disconnected),
+// unless seeded with `drive: true`, which gives the owner an access token for tests that stand in for Drive with fakeDrive().
 import { readFileSync, readdirSync } from 'node:fs';
+import { vi } from 'vitest';
 import { getPlatformProxy, unstable_splitSqlQuery } from 'wrangler';
 import type { EventSettings } from '../../shared/types';
 import { encrypt, randomToken, sha256 } from '../src/crypto';
@@ -47,13 +49,15 @@ export async function startHarness() {
   }
 
   /** An owner (without Drive access) and one event. Returns the tokens a guest and an admin would hold. */
-  async function seedEvent(opts: { settings?: Partial<EventSettings>; pin?: string; status?: 'active' | 'disabled' } = {}) {
+  async function seedEvent(opts: { settings?: Partial<EventSettings>; pin?: string; status?: 'active' | 'disabled'; drive?: boolean } = {}) {
     const ownerId = randomToken(6);
     const id = randomToken(9);
     const guestToken = randomToken(24);
     const adminToken = randomToken(32);
-    await env.DB.prepare(`INSERT INTO owners (id, google_sub, email, name, created_at) VALUES (?, ?, 'host@example.com', 'Host', ?)`)
-      .bind(ownerId, ownerId, now())
+    await env.DB.prepare(
+      `INSERT INTO owners (id, google_sub, email, name, access_enc, access_exp, created_at) VALUES (?, ?, 'host@example.com', 'Host', ?, ?, ?)`,
+    )
+      .bind(ownerId, ownerId, opts.drive ? await encrypt('test-access-token', env.TOKEN_KEY) : null, opts.drive ? now() + 3600 : 0, now())
       .run();
     await env.DB.prepare(
       `INSERT INTO events (id, owner_id, name, date, folder_id, status, guest_hash, guest_enc, admin_hash, pin_hash, settings, created_at)
@@ -109,3 +113,25 @@ export async function startHarness() {
 }
 
 export type Harness = Awaited<ReturnType<typeof startHarness>>;
+
+/**
+ * Answers the Worker's requests to Google with `respond` and records them. Other requests (the local D1 proxy)
+ * go through untouched. Undo with vi.unstubAllGlobals().
+ */
+export function fakeDrive(respond: (url: URL, init: RequestInit) => Response) {
+  const real = globalThis.fetch;
+  const calls: { url: URL; method: string }[] = [];
+  vi.stubGlobal('fetch', async (input: RequestInfo | URL, init: RequestInit = {}) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (!url.hostname.endsWith('googleapis.com')) return real(input, init);
+    calls.push({ url, method: init.method ?? 'GET' });
+    return respond(url, init);
+  });
+  return calls;
+}
+
+export const driveJson = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
+  new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } });
+
+/** Drive's error body, as in {"error": {"errors": [{"reason": "userRateLimitExceeded"}]}}. */
+export const driveError = (status: number, reason: string) => driveJson({ error: { code: status, errors: [{ reason }], message: reason } }, status);

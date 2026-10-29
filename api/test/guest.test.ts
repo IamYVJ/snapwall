@@ -1,5 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
-import { ORIGIN, startHarness, type Harness } from './harness';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
+import { ORIGIN, driveError, driveJson, fakeDrive, startHarness, type Harness } from './harness';
 
 let h: Harness;
 beforeAll(async () => (h = await startHarness()));
@@ -177,5 +177,63 @@ describe('CORS', () => {
 
     const evil = await h.call('/g/x', { method: 'OPTIONS', headers: { Origin: 'https://evil.example', 'Access-Control-Request-Method': 'GET' } });
     expect(evil.headers.get('Access-Control-Allow-Origin')).toBeNull();
+  });
+});
+
+describe('host Drive space', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const GB = 2 ** 30;
+  /** Drive with this much used of `limit`, opening upload sessions as asked unless `start` says otherwise. */
+  const driveWith = (quota: { limit?: number; usage: number }, start?: () => Response) =>
+    fakeDrive((url) => {
+      if (url.pathname.endsWith('/about')) return driveJson({ storageQuota: { limit: quota.limit && String(quota.limit), usage: String(quota.usage) } });
+      return start?.() ?? new Response(null, { headers: { Location: 'https://www.googleapis.com/upload/drive/v3/files?upload_id=x' } });
+    });
+  const pendingRows = async (eventId: string) =>
+    (await h.env.DB.prepare('SELECT COUNT(*) AS n FROM uploads WHERE event_id = ?').bind(eventId).first<{ n: number }>())!.n;
+
+  test('an upload starts when there is room', async () => {
+    const e = await h.seedEvent({ drive: true });
+    const calls = driveWith({ limit: 15 * GB, usage: GB });
+    const r = await upload(e.guestToken, { size: 5_000_000 });
+    expect(r.status).toBe(201);
+    expect(r.body.uploadUrl).toContain('upload_id=x');
+    expect(calls.map((c) => c.url.pathname).sort()).toEqual(['/drive/v3/about', '/upload/drive/v3/files']);
+  });
+
+  test('a file that would not fit is refused before the guest sends it', async () => {
+    const e = await h.seedEvent({ drive: true });
+    driveWith({ limit: 15 * GB, usage: 15 * GB - 1_000_000 });
+    const r = await upload(e.guestToken, { size: 5_000_000 });
+    expect(r.status).toBe(507);
+    expect(r.body.error).toBe('storage_full');
+    expect(r.body.message).toContain('Drive is full');
+    expect(await pendingRows(e.id)).toBe(0);
+  });
+
+  test('a Drive without a limit always has room', async () => {
+    const e = await h.seedEvent({ drive: true });
+    driveWith({ usage: 100 * GB });
+    expect((await upload(e.guestToken, {})).status).toBe(201);
+  });
+
+  test('when the space check fails, the upload goes ahead', async () => {
+    const e = await h.seedEvent({ drive: true });
+    fakeDrive((url) =>
+      url.pathname.endsWith('/about')
+        ? driveError(403, 'insufficientPermissions')
+        : new Response(null, { headers: { Location: 'https://www.googleapis.com/upload/drive/v3/files?upload_id=x' } }),
+    );
+    expect((await upload(e.guestToken, {})).status).toBe(201);
+  });
+
+  test('Drive refusing the session for space is reported as full', async () => {
+    const e = await h.seedEvent({ drive: true });
+    driveWith({ limit: 15 * GB, usage: 0 }, () => driveError(403, 'storageQuotaExceeded'));
+    const r = await upload(e.guestToken, {});
+    expect(r.status).toBe(507);
+    expect(r.body.error).toBe('storage_full');
+    expect(await pendingRows(e.id)).toBe(0);
   });
 });

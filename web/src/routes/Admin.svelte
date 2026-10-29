@@ -9,6 +9,7 @@
   import Modal from '../components/Modal.svelte';
   import Poster from '../components/Poster.svelte';
   import QR from '../components/QR.svelte';
+  import StorageWarning from '../components/StorageWarning.svelte';
   import Toggle from '../components/Toggle.svelte';
   import Wordmark from '../components/Wordmark.svelte';
   import { ApiError, adminApi, session, signInUrl, type EventPatch } from '../lib/api';
@@ -353,6 +354,8 @@
       <span class="spacer"></span>
       <span class="muted small">{event.ownerEmail}</span>
     </header>
+
+    <StorageWarning load={api.storage} />
 
     {#if adminToken}
       <div class="card save-link rise stack" style="--gap: 10px">

@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import type { AdminEvent, CreatedEvent, MediaFilter } from '../../shared/types';
+import type { AdminEvent, CreatedEvent, DriveStorage, MediaFilter } from '../../shared/types';
 import { findOwner, requireOwner } from './auth';
 import { decrypt, encrypt, randomToken, sha256 } from './crypto';
 import { driveFor, ensureRootFolder } from './google';
@@ -121,6 +121,13 @@ events.post('/', async (c) => {
 events.get('/:id', async (c) => {
   const { event, owner } = await eventAccess(c);
   return c.json(await toAdminEvent(c, event, owner));
+});
+
+/** How full the host's Drive is, for the warning on the event page (also shown to co-hosts using the admin link). */
+events.get('/:id/storage', async (c) => {
+  const { owner } = await eventAccess(c);
+  const body: DriveStorage = await (await driveFor(c.env, owner)).storage();
+  return c.json(body);
 });
 
 events.patch('/:id', async (c) => {

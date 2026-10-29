@@ -1,6 +1,7 @@
 import type {
   AdminEvent,
   CreatedEvent,
+  DriveStorage,
   EventSettings,
   GuestCount,
   MediaFilter,
@@ -70,6 +71,7 @@ export const signInUrl = () => `${API_URL}/auth/google/start`;
 
 export const owner = {
   me: () => request<Me>('/me', { headers: authed() }),
+  storage: () => request<DriveStorage>('/me/storage', { headers: authed() }),
   logout: () => request('/auth/logout', { method: 'POST', headers: authed() }).finally(session.clear),
   disconnect: () => request('/me', { method: 'DELETE', headers: authed() }).finally(session.clear),
   create: (body: { name: string; date: string | null; settings: Partial<EventSettings>; pin?: string }) =>
@@ -102,6 +104,7 @@ export function adminApi(eventId: string, adminToken: string | null) {
       return request<MediaPage>(`${base}/media${qs ? `?${qs}` : ''}`, { headers: headers() });
     },
     guests: () => request<GuestCount[]>(`${base}/guests`, { headers: headers() }),
+    storage: () => request<DriveStorage>(`${base}/storage`, { headers: headers() }),
     /** Approves the given uploads, or everything awaiting approval when no ids are given. */
     approve: (ids?: string[]) =>
       request<{ approved: number }>(`${base}/media/approve`, { method: 'POST', headers: headers(), json: ids ? { ids } : {} }),

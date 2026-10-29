@@ -3,7 +3,7 @@ import { streamSSE } from 'hono/streaming';
 import { IMAGE_TYPES, VIDEO_TYPES, type EventSettings, type PublicEvent, type UploadSlot } from '../../shared/types';
 import { randomToken, sha256 } from './crypto';
 import { pinHash } from './events';
-import { driveFor } from './google';
+import { STORAGE_FULL, driveFor } from './google';
 import { listGuests, listMedia, toMediaItem } from './media';
 import {
   HttpError,
@@ -192,15 +192,21 @@ guest.post('/:token/uploads', async (c) => {
   const uploadId = randomToken(12);
   const allowedOrigins = c.env.ALLOWED_ORIGINS.split(',').map((s) => s.trim());
   const origin = c.req.header('Origin');
-  const uploadUrl = await drive.startUpload({
-    name,
-    mimeType: mime,
-    size,
-    parent: event.folder_id,
-    origin: origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0],
-    description: uploader ? `Uploaded by ${uploader} via SnapWall` : 'Uploaded via SnapWall',
-    appProperties: { snapwallEvent: event.id, snapwallUpload: uploadId },
-  });
+  // Drive may only refuse a too-big file after the guest has sent all of it, so check the space up front.
+  // The check runs alongside opening the session; if it fails, the upload goes ahead and Drive decides.
+  const [uploadUrl, space] = await Promise.all([
+    drive.startUpload({
+      name,
+      mimeType: mime,
+      size,
+      parent: event.folder_id,
+      origin: origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0],
+      description: uploader ? `Uploaded by ${uploader} via SnapWall` : 'Uploaded via SnapWall',
+      appProperties: { snapwallEvent: event.id, snapwallUpload: uploadId },
+    }),
+    drive.storage().catch(() => null),
+  ]);
+  if (space && space.limit !== null && space.usage + size > space.limit) throw new HttpError(507, 'storage_full', STORAGE_FULL);
 
   await db
     .prepare(

@@ -1,8 +1,8 @@
 import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
-import type { EventSummary, Me } from '../../shared/types';
+import type { DriveStorage, EventSummary, Me } from '../../shared/types';
 import { decrypt, encrypt, randomToken, sha256 } from './crypto';
-import { DRIVE_SCOPE, authUrl, decodeIdToken, exchangeCode, revokeToken } from './google';
+import { DRIVE_SCOPE, authUrl, decodeIdToken, driveFor, exchangeCode, revokeToken } from './google';
 import { HttpError, now, type AppEnv, type Ctx, type EventRow, type OwnerRow } from './util';
 
 const SESSION_TTL = 30 * 86400;
@@ -110,6 +110,13 @@ me.get('/', async (c) => {
     .bind(owner.id)
     .all<EventRow & { count: number }>();
   const body: Me = { email: owner.email, name: owner.name, events: results.map(toSummary) };
+  return c.json(body);
+});
+
+/** How full the host's Drive is, for the dashboard warning. Asked separately so a slow Drive never delays the dashboard. */
+me.get('/storage', async (c) => {
+  const owner = await requireOwner(c);
+  const body: DriveStorage = await (await driveFor(c.env, owner)).storage();
   return c.json(body);
 });
 

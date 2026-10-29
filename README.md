@@ -23,11 +23,12 @@ GitHub Pages (web/)  ──JSON──▶  Cloudflare Worker + D1 (api/)  ──D
 | Location data | Removed in the browser before upload, losslessly. JPEG, PNG and WebP lose EXIF/XMP/IPTC (JPEG orientation kept). HEIC/HEIF/AVIF and MP4/MOV address data by byte offset, so location is overwritten in place: the HEIF Exif item is cut to its orientation, video `©xyz`/`loci` boxes and Apple location keys are cleared, and XMP GPS and place fields are blanked. Hosts can turn this off per event. |
 | Abuse | Per-event, per-IP rate limits (the IP is kept only as a salted hash), optional per-guest file and storage limits (keyed by a random per-browser ID, kept only as a salted per-event hash), type allowlist (no SVG/HTML), size limits, optional PIN, optional approval queue. |
 | Analytics | Page loads are counted with GoatCounter (no cookies, no IP addresses kept). Only the path `/snapwall/` and a fixed title are sent; event names and link tokens never leave the browser. |
+| Drive busy or full | When Drive throttles (429 or a 403 rate-limit reason) or briefly fails, the Worker retries with jittered backoff (reads and rate-limited calls only, so nothing is created twice), and the guest's browser waits and tries again before showing an error. Each upload checks the host's free space first, so a file that won't fit is refused before it is sent; hosts see a warning on their dashboard and event page when the Drive is nearly full. |
 | Removal | Disable an event (links show "closed"), delete it (optionally trashing the Drive folder), or disconnect Google, which revokes access and erases the account. |
 
 ## Checks
 
-`npm run check` type-checks both packages and `npm test` runs the tests. The API tests run the real Worker against an in-memory local D1 with every migration applied, without calling Google. Both deploy workflows run these before deploying, and the Checks workflow runs them on pull requests and other branches.
+`npm run check` type-checks both packages and `npm test` runs the tests. The API tests run the real Worker against an in-memory local D1 with every migration applied; Google is never called, and tests that need Drive answer its requests with stand-ins. Both deploy workflows run these before deploying, and the Checks workflow runs them on pull requests and other branches.
 
 ## Known limits
 

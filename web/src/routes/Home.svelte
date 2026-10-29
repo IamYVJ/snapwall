@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import type { Me } from '../../../shared/types';
   import Modal from '../components/Modal.svelte';
+  import StorageWarning from '../components/StorageWarning.svelte';
   import Wordmark from '../components/Wordmark.svelte';
   import { owner, session, signInUrl } from '../lib/api';
   import { formatDate, plural } from '../lib/format';
@@ -62,6 +63,8 @@
       <span class="spacer"></span>
       <button class="btn" onclick={() => go('new')}>New event</button>
     </section>
+
+    <StorageWarning load={owner.storage} />
 
     {#if me.events.length}
       <ul class="events">

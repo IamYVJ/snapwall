@@ -33,6 +33,13 @@ export interface Me {
   events: EventSummary[];
 }
 
+/** How full the host's Google Drive is, in bytes. */
+export interface DriveStorage {
+  /** Null when the Drive has no limit. */
+  limit: number | null;
+  usage: number;
+}
+
 export interface EventSummary {
   id: string;
   name: string;
