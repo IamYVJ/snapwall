@@ -20,7 +20,7 @@
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@tsconfig/svelte": "^5.0.8",
     "@types/qrcode": "^1.5.6",
-    "fflate": "^0.8.2",
+    "fflate": "^0.8.3",
     "svelte": "^5.57.3",
     "svelte-check": "^4.7.7",
     "typescript": "^6.0.3",
