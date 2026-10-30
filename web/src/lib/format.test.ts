@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { autoCloseAt, bytesLabel, driveSpace, plural, sizeLabel } from './format';
+import { autoCloseAt, bytesLabel, driveSpace, plural, shiftClose, sizeLabel } from './format';
 
 test('autoCloseAt', () => {
   const now = new Date(2026, 9, 30, 15, 0).getTime();
@@ -10,6 +10,21 @@ test('autoCloseAt', () => {
   // No date, or an event long past: a week from now.
   expect(autoCloseAt(null, now)).toBe(now / 1000 + 7 * 86400);
   expect(autoCloseAt('2026-01-01', now)).toBe(now / 1000 + 7 * 86400);
+});
+
+test('shiftClose', () => {
+  const now = new Date(2026, 9, 30, 15, 0).getTime();
+  const sec = (d: Date) => d.getTime() / 1000;
+  const picked = sec(new Date(2026, 10, 2, 18, 30));
+  // Moves by the same number of days as the date, keeping the time the host picked.
+  expect(shiftClose(picked, '2026-10-28', '2026-11-07', now)).toBe(sec(new Date(2026, 10, 12, 18, 30)));
+  expect(shiftClose(picked, '2026-10-28', '2026-10-26', now)).toBe(sec(new Date(2026, 9, 31, 18, 30)));
+  // Off stays off; an unchanged or removed date changes nothing.
+  expect(shiftClose(null, '2026-10-28', '2026-11-07', now)).toBeNull();
+  expect(shiftClose(picked, '2026-10-28', '2026-10-28', now)).toBe(picked);
+  expect(shiftClose(picked, '2026-10-28', null, now)).toBe(picked);
+  // A first date gets the usual close time.
+  expect(shiftClose(picked, null, '2026-11-07', now)).toBe(sec(new Date(2026, 10, 14, 23, 59)));
 });
 
 test('plural', () => {

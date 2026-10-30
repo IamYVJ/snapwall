@@ -13,7 +13,7 @@
   import Toggle from '../components/Toggle.svelte';
   import Wordmark from '../components/Wordmark.svelte';
   import { ApiError, adminApi, session, signInUrl, type EventPatch } from '../lib/api';
-  import { AUTO_CLOSE_DAYS, autoCloseAt, closeLabel, copyText, formatDate, isVideo, plural, saveBlob, sizeLabel } from '../lib/format';
+  import { AUTO_CLOSE_DAYS, autoCloseAt, closeLabel, copyText, formatDate, isVideo, plural, saveBlob, shiftClose, sizeLabel } from '../lib/format';
   import { go, href, pageUrl } from '../lib/router.svelte';
   import { streamsToDisk, zipMedia, type ZipProgress, type ZipResult } from '../lib/zip';
 
@@ -43,6 +43,9 @@
   let pinModal = $state(false);
   let pinInput = $state('');
   let posterOpen = $state(false);
+  let editOpen = $state(false);
+  let editName = $state('');
+  let editDate = $state('');
   let approving = $state(false);
 
   let zipOpen = $state(false);
@@ -62,6 +65,8 @@
   const expiresLocal = $derived(event?.settings.expiresAt ? toLocalInput(event.settings.expiresAt) : '');
   // Checked when the event loads or changes; the 15-second refresh keeps it close enough.
   const expired = $derived(!!event?.settings.expiresAt && event.settings.expiresAt <= Date.now() / 1000);
+  // Where the close time ends up if the date in the edit form is saved.
+  const editClose = $derived(event ? shiftClose(event.settings.expiresAt, event.date, editDate || null) : null);
 
   function toLocalInput(sec: number): string {
     const d = new Date(sec * 1000);
@@ -308,6 +313,21 @@
     pinInput = '';
   }
 
+  function openEdit() {
+    editName = event!.name;
+    editDate = event!.date ?? '';
+    editOpen = true;
+  }
+
+  async function saveEdit(e: SubmitEvent) {
+    e.preventDefault();
+    const date = editDate || null;
+    const p: EventPatch = { name: editName.trim(), date };
+    if (editClose !== event!.settings.expiresAt) p.settings = { expiresAt: editClose };
+    await patch(p);
+    editOpen = false;
+  }
+
   async function deleteEvent() {
     deleting = true;
     try {
@@ -384,6 +404,7 @@
                 : 'Live'}
         </span>
         {#if event.date}<span class="eyebrow">{formatDate(event.date)}</span>{/if}
+        <button class="link small" onclick={openEdit}>{event.date ? 'Edit name or date' : 'Edit name or add a date'}</button>
       </div>
       <h1 class="display">{event.name}</h1>
       <p class="muted">
@@ -729,6 +750,28 @@
   </Modal>
 
   <Poster bind:open={posterOpen} name={event.name} date={event.date} url={guestUrl} />
+
+  <Modal bind:open={editOpen} title="Edit event">
+    <form class="stack" onsubmit={saveEdit}>
+      <label class="field">
+        <span>Event name</span>
+        <input class="input" bind:value={editName} maxlength="80" required />
+      </label>
+      <label class="field">
+        <span>Date (optional)</span>
+        <input class="input" type="date" bind:value={editDate} />
+      </label>
+      {#if editClose !== null && editClose !== event.settings.expiresAt}
+        <p class="muted small" style="margin: 0">
+          Uploads will {editClose <= Date.now() / 1000 ? 'close straight away (the new time has passed)' : `now close ${closeLabel(editClose)}`}.
+        </p>
+      {/if}
+      <div class="row">
+        <button class="btn" type="submit" disabled={saving || !editName.trim()}>Save</button>
+        <button class="btn ghost" type="button" onclick={() => (editOpen = false)}>Cancel</button>
+      </div>
+    </form>
+  </Modal>
 
   <Modal bind:open={pinModal} title="Event PIN">
     <form class="stack" onsubmit={savePin}>

@@ -20,6 +20,23 @@ export function autoCloseAt(date: string | null, now = Date.now()): number {
   return dated > now / 1000 ? dated : week;
 }
 
+/**
+ * The close time once the event date changes from `from` to `to`: moved by as many days as the date moved, so a time
+ * the host picked keeps its place. An event that had no date gets the usual time; removing the date leaves it alone.
+ */
+export function shiftClose(expiresAt: number | null, from: string | null, to: string | null, now = Date.now()): number | null {
+  if (expiresAt === null || !to || from === to) return expiresAt;
+  if (!from) return autoCloseAt(to, now);
+  const day = (date: string) => {
+    const [y, m, d] = date.split('-').map(Number);
+    return Date.UTC(y, m - 1, d) / 86400000;
+  };
+  // Through a local date, so the clock time stays put across daylight saving changes.
+  const moved = new Date(expiresAt * 1000);
+  moved.setDate(moved.getDate() + day(to) - day(from));
+  return Math.floor(moved.getTime() / 1000);
+}
+
 /** e.g. "Wed 4 Nov, 11:59 pm", in the viewer's own locale. */
 export function closeLabel(seconds: number): string {
   return new Date(seconds * 1000).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
