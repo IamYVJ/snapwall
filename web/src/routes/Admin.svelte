@@ -293,13 +293,12 @@
     saveBlob(await (await fetch(url)).blob(), `${event.name} QR.png`.replace(/[\\/:*?"<>|]/g, '_'));
   }
 
+  // Without the system share sheet, Share would only copy the link, the same as Copy, so it isn't shown.
+  const canShare = typeof navigator !== 'undefined' && !!navigator.share;
+
   async function share() {
     if (!event) return;
-    if (navigator.share) {
-      await navigator.share({ title: event.name, text: `Add your photos to ${event.name}`, url: guestUrl }).catch(() => undefined);
-    } else {
-      copy(guestUrl, 'Guest link');
-    }
+    await navigator.share({ title: event.name, text: `Add your photos to ${event.name}`, url: guestUrl }).catch(() => undefined);
   }
 
   async function setHidden(item: MediaItem, hidden: boolean) {
@@ -439,8 +438,8 @@
           <code>{guestUrl}</code>
         </div>
         <div class="row">
-          <button class="btn" onclick={share}>Share link</button>
-          <button class="btn ghost" onclick={() => copy(guestUrl, 'Guest link')}><Icon name="copy" size={16} /> Copy</button>
+          {#if canShare}<button class="btn" onclick={share}>Share link</button>{/if}
+          <button class="btn" class:ghost={canShare} onclick={() => copy(guestUrl, 'Guest link')}><Icon name="copy" size={16} /> Copy link</button>
           <button class="btn ghost" onclick={downloadQr}><Icon name="download" size={16} /> QR</button>
           <button class="btn ghost" onclick={() => (posterOpen = true)}>Poster</button>
         </div>
