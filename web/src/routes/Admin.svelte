@@ -2,6 +2,7 @@
   import QRCode from 'qrcode';
   import { onDestroy, onMount } from 'svelte';
   import type { AdminEvent, EventSettings, GuestCount, MediaFilter, MediaItem } from '../../../shared/types';
+  import AppButton from '../components/AppButton.svelte';
   import GuestFilter from '../components/GuestFilter.svelte';
   import Icon from '../components/Icon.svelte';
   import Lightbox from '../components/Lightbox.svelte';
@@ -15,6 +16,7 @@
   import { ApiError, adminApi, session, signInUrl, type EventPatch } from '../lib/api';
   import { AUTO_CLOSE_DAYS, autoCloseAt, closeLabel, copyText, formatDate, isVideo, plural, saveBlob, shiftClose, sizeLabel } from '../lib/format';
   import { go, href, pageUrl } from '../lib/router.svelte';
+  import { saved } from '../lib/saved.svelte';
   import { streamsToDisk, zipMedia, type ZipProgress, type ZipResult } from '../lib/zip';
 
   let { eventId, adminToken }: { eventId: string; adminToken: string | null } = $props();
@@ -62,6 +64,11 @@
 
   const guestUrl = $derived(event ? pageUrl(`e/${event.guestToken}`) : '');
   const adminUrl = $derived(adminToken ? pageUrl(`a/${eventId}/${adminToken}`) : newAdminLink);
+
+  // A co-host's admin link is listed on this device's home page. The owner's events come from their sign-in instead.
+  $effect(() => {
+    if (event && adminToken) saved.add({ id: eventId, name: event.name, date: event.date, path: `a/${eventId}/${adminToken}`, role: 'admin' });
+  });
   const expiresLocal = $derived(event?.settings.expiresAt ? toLocalInput(event.settings.expiresAt) : '');
   // Checked when the event loads or changes; the 15-second refresh keeps it close enough.
   const expired = $derived(!!event?.settings.expiresAt && event.settings.expiresAt <= Date.now() / 1000);
@@ -388,9 +395,9 @@
 {:else if event}
   <div class="page admin">
     <header class="top row">
-      <Wordmark href={session.get() ? '#/' : '#/privacy'} />
+      <Wordmark />
       <span class="spacer"></span>
-      <span class="muted small">{event.ownerEmail}</span>
+      {#if adminToken}<AppButton />{:else}<span class="muted small">{event.ownerEmail}</span>{/if}
     </header>
 
     <StorageWarning load={api.storage} />

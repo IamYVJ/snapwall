@@ -1,17 +1,23 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { Me } from '../../../shared/types';
+  import AddFromLink from '../components/AddFromLink.svelte';
+  import Icon from '../components/Icon.svelte';
   import Modal from '../components/Modal.svelte';
   import StorageWarning from '../components/StorageWarning.svelte';
   import Wordmark from '../components/Wordmark.svelte';
   import { owner, session, signInUrl } from '../lib/api';
   import { formatDate, plural } from '../lib/format';
+  import { install } from '../lib/install.svelte';
   import { go } from '../lib/router.svelte';
+  import { saved } from '../lib/saved.svelte';
 
   let me = $state<Me | null>(null);
   let loading = $state(!!session.get());
   let confirmDisconnect = $state(false);
   let busy = $state(false);
+  // Guest and co-host links opened on this device, minus events the signed-in owner already sees as their own.
+  const others = $derived(saved.list.filter((e) => !me?.events.some((x) => x.id === e.id)));
 
   onMount(() => {
     if (!session.get()) return;
@@ -43,6 +49,23 @@
     me = null;
   }
 </script>
+
+{#snippet deviceEvents()}
+  <ul class="events">
+    {#each others as e (e.id)}
+      <li>
+        <a href="#/{e.path}" class="event">
+          <span class="name">{e.name}</span>
+          <span class="meta muted small">{e.date ? formatDate(e.date) : 'No date'}</span>
+          <span class="pill">{e.role === 'admin' ? 'Co-host' : 'Guest'}</span>
+        </a>
+        <button class="remove" onclick={() => saved.remove(e.id)} aria-label="Remove {e.name} from this device" title="Remove from this device">
+          <Icon name="close" size={18} />
+        </button>
+      </li>
+    {/each}
+  </ul>
+{/snippet}
 
 {#if loading}
   <div class="center-screen"><div class="spinner"></div></div>
@@ -86,8 +109,14 @@
       </div>
     {/if}
 
+    {#if others.length}
+      <p class="eyebrow device">On this device</p>
+      {@render deviceEvents()}
+    {/if}
+
     <footer class="foot row">
       <a class="link" href="#/privacy">Privacy</a>
+      <AddFromLink />
       <span class="spacer"></span>
       <button class="link" onclick={() => (confirmDisconnect = true)}>Disconnect Google</button>
     </footer>
@@ -103,6 +132,31 @@
       <button class="btn ghost" onclick={() => (confirmDisconnect = false)}>Cancel</button>
     </div>
   </Modal>
+{:else if others.length}
+  <div class="page">
+    <header class="top row">
+      <Wordmark />
+      <span class="spacer"></span>
+      <a class="link" href={signInUrl()}>Sign in</a>
+    </header>
+
+    <section class="head row rise">
+      <div class="stack" style="--gap: 8px">
+        <p class="eyebrow">On this device</p>
+        <h1 class="title">Your events</h1>
+      </div>
+      <span class="spacer"></span>
+      <a class="btn" href={signInUrl()} onclick={startCreate}>New event</a>
+    </section>
+
+    {@render deviceEvents()}
+
+    <footer class="foot row">
+      <a class="link" href="#/privacy">Privacy</a>
+      <span class="spacer"></span>
+      <AddFromLink />
+    </footer>
+  </div>
 {:else}
   <div class="landing">
     <div class="page">
@@ -123,6 +177,12 @@
           <a class="btn lg" href={signInUrl()} onclick={startCreate}>Create an event</a>
           <span class="muted small">Free · Sign in with Google</span>
         </div>
+        {#if install.standalone}
+          <div class="row cta">
+            <AddFromLink button />
+            <span class="muted small">Got a guest or admin link? Open it here.</span>
+          </div>
+        {/if}
       </section>
 
       <section class="points">
@@ -146,6 +206,7 @@
       <footer class="foot row">
         <span class="muted small">SnapWall</span>
         <span class="spacer"></span>
+        <AddFromLink />
         <a class="link" href="#/privacy">Privacy</a>
       </footer>
     </div>
@@ -206,19 +267,46 @@
     padding: 0;
     border-top: 1px solid var(--line);
   }
+  .events li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid var(--line);
+  }
   .event {
+    flex: 1;
+    min-width: 0;
     display: grid;
     grid-template-columns: 1fr auto;
     gap: 4px 16px;
     padding: 22px 0;
-    border-bottom: 1px solid var(--line);
     text-decoration: none;
     transition: padding 0.2s ease;
   }
   .event:hover {
     padding-left: 8px;
   }
+  .remove {
+    flex: none;
+    width: 40px;
+    height: 40px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 50%;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .remove:hover {
+    background: var(--line);
+    color: inherit;
+  }
+  .device {
+    margin: 48px 0 16px;
+  }
   .name {
+    overflow-wrap: anywhere;
     font-family: var(--serif);
     font-size: 28px;
     line-height: 1.1;
