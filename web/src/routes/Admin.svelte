@@ -270,6 +270,23 @@
     flash((await copyText(text)) ? `${what} copied` : 'Copy failed — select and copy manually');
   }
 
+  /** A text file with the event's links, so the host has them somewhere other than this browser. */
+  function saveLinks() {
+    if (!event) return;
+    const lines = [`SnapWall: ${event.name}`];
+    if (event.date) lines.push(formatDate(event.date));
+    lines.push('', 'Guest link (share this with guests):', guestUrl);
+    if (event.hasPin) lines.push('Guests also need the event PIN. Share it separately.');
+    lines.push('');
+    if (adminUrl) {
+      lines.push('Admin link (keep this private: anyone with it can manage the event):', adminUrl);
+    } else {
+      lines.push(`Manage the event by signing in to SnapWall with Google as ${event.ownerEmail}:`, pageUrl(`manage/${eventId}`));
+    }
+    lines.push('', 'Google Drive folder:', event.folderUrl, '', `Saved ${new Date().toLocaleString()}.`, '');
+    saveBlob(new Blob([lines.join('\n')], { type: 'text/plain' }), `${event.name} links.txt`.replace(/[\\/:*?"<>|]/g, '_'));
+  }
+
   async function downloadQr() {
     if (!event) return;
     const url = await QRCode.toDataURL(guestUrl, { width: 1400, margin: 3, errorCorrectionLevel: 'M' });
@@ -388,6 +405,7 @@
         <div class="linkbox row">
           <code>{adminUrl}</code>
           <button class="btn sm ghost" onclick={() => copy(adminUrl!, 'Admin link')}><Icon name="copy" size={16} /> Copy</button>
+          <button class="btn sm ghost" onclick={saveLinks}><Icon name="download" size={16} /> Save to file</button>
         </div>
       </div>
     {/if}
@@ -431,6 +449,7 @@
           <a class="link" href={href(`e/${event.guestToken}`)} target="_blank" rel="noreferrer">Open wall</a>
           <a class="link" href={href(`e/${event.guestToken}/show`)} target="_blank" rel="noreferrer">Slideshow</a>
           <a class="link" href={event.folderUrl} target="_blank" rel="noreferrer">Drive folder <Icon name="external" size={12} /></a>
+          <button class="link" onclick={saveLinks}>Save links to a file</button>
         </div>
       </section>
 
@@ -661,6 +680,7 @@
         <div class="linkbox row" style="margin: 0 0 16px">
           <code>{newAdminLink}</code>
           <button class="btn sm ghost" onclick={() => copy(newAdminLink!, 'Admin link')}><Icon name="copy" size={16} /> Copy</button>
+          <button class="btn sm ghost" onclick={saveLinks}><Icon name="download" size={16} /> Save to file</button>
         </div>
       {/if}
       <div class="drow">
