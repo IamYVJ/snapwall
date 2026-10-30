@@ -471,6 +471,13 @@
           />
           <Toggle label="Require guest names" checked={event.settings.requireName} onchange={setting('requireName')} disabled={saving} />
           <Toggle
+            label="Guests can delete their uploads"
+            hint="For an hour after sending, from the same phone. Deleted files go to your Drive trash."
+            checked={event.settings.guestDelete}
+            onchange={setting('guestDelete')}
+            disabled={saving}
+          />
+          <Toggle
             label="Remove location"
             hint="Removes GPS location from photos and videos on the guest’s device before upload. Photos also lose camera details."
             checked={event.settings.stripLocation}

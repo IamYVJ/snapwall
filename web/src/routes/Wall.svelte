@@ -26,6 +26,9 @@
     paused?: boolean;
     error?: string;
     canRetry?: boolean;
+    /** The upload once it's on the wall, so the guest can still delete it for a while. */
+    item?: MediaItem;
+    deleted?: boolean;
   }
 
   const pinKey = `snapwall.pin.${token}`;
@@ -297,6 +300,7 @@
       );
       job.status = 'done';
       job.progress = 1;
+      job.item = item;
       sentHere++;
       if (event.settings.guestView && !item.hidden) {
         if (!by || by === item.uploader) items = [item, ...items];
@@ -317,6 +321,29 @@
         }
       }
     }
+  }
+
+  const canDelete = (item?: MediaItem) => !!item?.deletableUntil && item.deletableUntil > Date.now() / 1000;
+
+  /** Deletes one of the guest's own uploads, from the upload list or the photo viewer. */
+  async function removeMine(item: MediaItem) {
+    if (!confirm(`Delete “${item.name}”? It will be removed from the wall and the host’s Drive.`)) return;
+    try {
+      await api.deleteUpload(item.id);
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'Couldn’t delete it. Please try again.');
+      return;
+    }
+    const wasShown = items.some((i) => i.id === item.id);
+    if (open !== null) {
+      const id = shown[open]?.id;
+      open = null;
+      if (id !== item.id) open = shown.filter((i) => i.id !== item.id).findIndex((i) => i.id === id);
+    }
+    items = items.filter((i) => i.id !== item.id);
+    if (matches) matches = matches.filter((i) => i.id !== item.id);
+    if (event && wasShown) event.count = Math.max(0, event.count - 1);
+    for (const j of jobs) if (j.item?.id === item.id) j.deleted = true;
   }
 
   function retry(job: Job) {
@@ -538,7 +565,10 @@
         {#each jobs as job (job.key)}
           <li class="job">
             <span class="jname">{job.file.name}</span>
-            {#if job.status === 'done'}
+            {#if job.deleted}
+              <span class="muted small">Deleted</span>
+            {:else if job.status === 'done'}
+              {#if canDelete(job.item)}<button class="link small" onclick={() => removeMine(job.item!)}>Delete</button>{/if}
               <span class="ok"><Icon name="check" size={16} stroke={2.2} /></span>
             {:else if job.status === 'error'}
               <span class="error-text small">{job.error}</span>
@@ -574,7 +604,7 @@
     {/if}
   </nav>
 
-  <Lightbox items={shown} bind:index={open} />
+  <Lightbox items={shown} bind:index={open} ondelete={event.settings.guestDelete ? removeMine : undefined} />
 
   {#if event.settings.faceSearch}
     <FindMe bind:this={findMe} bind:open={findOpen} bind:progress={findProgress} list={allMedia} onmatches={showMatches} />

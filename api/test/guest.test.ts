@@ -246,3 +246,63 @@ describe('host Drive space', () => {
     expect(await pendingRows(e.id)).toBe(0);
   });
 });
+
+describe('guests deleting their own uploads', () => {
+  const device = 'device_aaaaaaaaaaaaaaaa';
+  const other = 'device_bbbbbbbbbbbbbbbb';
+  const recent = () => Math.floor(Date.now() / 1000) - 60;
+  const remove = (token: string, id: string, headers: Record<string, string> = {}) =>
+    h.call(`/g/${token}/uploads/${id}`, { method: 'DELETE', headers });
+  const rows = async (eventId: string) =>
+    (await h.env.DB.prepare('SELECT COUNT(*) AS n FROM uploads WHERE event_id = ?').bind(eventId).first<{ n: number }>())!.n;
+
+  test('the wall marks only this device’s recent uploads as deletable', async () => {
+    const e = await h.seedEvent();
+    const mine = await h.seedUpload(e.id, { guest_hash: await h.guestHash(device, e.id), created_at: recent() });
+    await h.seedUpload(e.id, { guest_hash: await h.guestHash(device, e.id), created_at: recent() - 7200 });
+    await h.seedUpload(e.id, { guest_hash: await h.guestHash(other, e.id), created_at: recent() });
+    const r = await h.call(`/g/${e.guestToken}/media`, { headers: { 'X-Guest-Id': device } });
+    const deletable = r.body.items.filter((i: { deletableUntil: number | null }) => i.deletableUntil !== null);
+    expect(deletable.map((i: { id: string }) => i.id)).toEqual([mine.id]);
+    expect(deletable[0].deletableUntil).toBe(mine.created_at + 3600);
+  });
+
+  test('moves the file to the host’s Drive trash and removes it from the wall', async () => {
+    const e = await h.seedEvent({ drive: true });
+    const u = await h.seedUpload(e.id, { guest_hash: await h.guestHash(device, e.id), created_at: recent() });
+    const calls = fakeDrive(() => driveJson({}));
+    try {
+      const r = await remove(e.guestToken, u.id, { 'X-Guest-Id': device });
+      expect(r.status).toBe(200);
+      expect(calls.map((c) => `${c.method} ${c.url.pathname}`)).toEqual([`PATCH /drive/v3/files/${u.file_id}`]);
+      expect(await rows(e.id)).toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('refuses other devices, guests without a device ID, and old uploads', async () => {
+    const e = await h.seedEvent();
+    const u = await h.seedUpload(e.id, { guest_hash: await h.guestHash(device, e.id), created_at: recent() });
+    expect((await remove(e.guestToken, u.id, { 'X-Guest-Id': other })).body.error).toBe('upload_not_found');
+    expect((await remove(e.guestToken, u.id)).body.error).toBe('upload_not_found');
+    const old = await h.seedUpload(e.id, { guest_hash: await h.guestHash(device, e.id), created_at: recent() - 3600 });
+    expect((await remove(e.guestToken, old.id, { 'X-Guest-Id': device })).body.error).toBe('delete_expired');
+    expect(await rows(e.id)).toBe(2);
+  });
+
+  test('a guest matched only by IP cannot delete, since the venue’s Wi-Fi is shared', async () => {
+    const e = await h.seedEvent();
+    const { sha256 } = await import('../src/crypto');
+    const u = await h.seedUpload(e.id, { guest_hash: await sha256(`203.0.113.9:${e.id}:${h.env.SIGNING_KEY}`), created_at: recent() });
+    expect((await remove(e.guestToken, u.id, { 'CF-Connecting-IP': '203.0.113.9' })).body.error).toBe('upload_not_found');
+  });
+
+  test('the host can turn it off', async () => {
+    const e = await h.seedEvent({ settings: { guestDelete: false } });
+    const u = await h.seedUpload(e.id, { guest_hash: await h.guestHash(device, e.id), created_at: recent() });
+    expect((await h.call(`/g/${e.guestToken}/media`, { headers: { 'X-Guest-Id': device } })).body.items[0].deletableUntil).toBeNull();
+    expect((await remove(e.guestToken, u.id, { 'X-Guest-Id': device })).body.error).toBe('delete_disabled');
+    expect((await h.call(`/g/${e.guestToken}`)).body.settings.guestDelete).toBe(false);
+  });
+});

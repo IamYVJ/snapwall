@@ -152,6 +152,8 @@ export function guestApi(token: string, pin: () => string | null) {
       request<UploadSlot>(`${base}/uploads`, { method: 'POST', headers: headers(), json: body }),
     completeUpload: (uploadId: string, fileId: string) =>
       request<MediaItem>(`${base}/uploads/${uploadId}/complete`, { method: 'POST', headers: headers(), json: { fileId } }),
+    /** Deletes one of this device's own recent uploads (see MediaItem.deletableUntil). */
+    deleteUpload: (uploadId: string) => request(`${base}/uploads/${uploadId}`, { method: 'DELETE', headers: headers() }),
     /**
      * Reads one server-sent event stream until the server ends it (about a minute), passing each message on:
      * the event's media version, or "closed". Uses fetch rather than EventSource so the PIN header can be sent.

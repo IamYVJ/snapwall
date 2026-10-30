@@ -94,6 +94,7 @@ export const DEFAULT_SETTINGS: EventSettings = {
   expiresAt: null,
   guestMaxFiles: null,
   guestMaxMB: null,
+  guestDelete: true,
 };
 
 export const MAX_FILE_MB = 5000;
@@ -114,7 +115,7 @@ export function mergeSettings(base: EventSettings, input: unknown): EventSetting
   const out = { ...base };
   if (!input || typeof input !== 'object') return out;
   const src = input as Record<string, unknown>;
-  for (const key of ['guestView', 'guestDownload', 'allowVideo', 'moderation', 'uploadsOpen', 'requireName', 'stripLocation', 'faceSearch'] as const) {
+  for (const key of ['guestView', 'guestDownload', 'allowVideo', 'moderation', 'uploadsOpen', 'requireName', 'stripLocation', 'faceSearch', 'guestDelete'] as const) {
     if (typeof src[key] === 'boolean') out[key] = src[key];
   }
   if (typeof src.maxFileMB === 'number' && Number.isFinite(src.maxFileMB)) {

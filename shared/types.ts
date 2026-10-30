@@ -27,7 +27,12 @@ export interface EventSettings {
   guestMaxFiles: number | null;
   /** Most megabytes one guest may upload in total, or null for no limit. */
   guestMaxMB: number | null;
+  /** Guests can delete their own uploads from the same device, for GUEST_DELETE_SECONDS after sending. */
+  guestDelete: boolean;
 }
+
+/** How long after sending a guest can still delete an upload. */
+export const GUEST_DELETE_SECONDS = 3600;
 
 export interface Me {
   email: string;
@@ -87,6 +92,7 @@ export interface PublicEvent {
     | 'moderation'
     | 'guestMaxFiles'
     | 'guestMaxMB'
+    | 'guestDelete'
   >;
   /** What this guest has uploaded so far, when the event has per-guest limits. */
   usage: { files: number; bytes: number } | null;
@@ -105,6 +111,8 @@ export interface MediaItem {
   thumb: string;
   full: string;
   download: string | null;
+  /** On the guest wall, until when this guest may still delete it (Unix seconds); otherwise null. */
+  deletableUntil: number | null;
 }
 
 /** A guest name and how many uploads carry it, for filtering the wall by guest. */

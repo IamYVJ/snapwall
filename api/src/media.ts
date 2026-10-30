@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import type { EventSettings, GuestCount, MediaFilter, MediaItem, MediaPage } from '../../shared/types';
+import { GUEST_DELETE_SECONDS, type EventSettings, type GuestCount, type MediaFilter, type MediaItem, type MediaPage } from '../../shared/types';
 import { sign, verify } from './crypto';
 import { driveFor } from './google';
 import { HttpError, now, parseSettings, type AppEnv, type Ctx, type EventRow, type OwnerRow, type UploadRow } from './util';
@@ -21,7 +21,22 @@ async function mediaUrl(c: Ctx, eventId: string, uploadId: string, kind: Kind, a
   return `${new URL(c.req.url).origin}/m/${eventId}/${uploadId}/${kind}?a=${aud}&e=${exp}&s=${sig}`;
 }
 
-export async function toMediaItem(c: Ctx, event: EventRow, u: UploadRow, aud: Audience, settings: EventSettings): Promise<MediaItem> {
+/** Until when the guest whose device key is `mine` may delete this upload, or null if they can't. */
+function deletableUntil(u: UploadRow, settings: EventSettings, mine: string | null): number | null {
+  if (!settings.guestDelete || !mine || u.guest_hash !== mine) return null;
+  const until = u.created_at + GUEST_DELETE_SECONDS;
+  return until > now() ? until : null;
+}
+
+/** `mine` is the guest's device key, so the guest wall can offer to delete their own recent uploads. */
+export async function toMediaItem(
+  c: Ctx,
+  event: EventRow,
+  u: UploadRow,
+  aud: Audience,
+  settings: EventSettings,
+  mine: string | null = null,
+): Promise<MediaItem> {
   const canDownload = aud === 'a' || settings.guestDownload;
   return {
     id: u.id,
@@ -35,6 +50,7 @@ export async function toMediaItem(c: Ctx, event: EventRow, u: UploadRow, aud: Au
     thumb: await mediaUrl(c, event.id, u.id, 'thumb', aud),
     full: await mediaUrl(c, event.id, u.id, 'full', aud),
     download: canDownload ? await mediaUrl(c, event.id, u.id, 'dl', aud) : null,
+    deletableUntil: aud === 'g' ? deletableUntil(u, settings, mine) : null,
   };
 }
 
@@ -44,6 +60,7 @@ export async function listMedia(
   aud: Audience,
   settings: EventSettings,
   filter: MediaFilter = 'all',
+  mine: string | null = null,
 ): Promise<MediaPage> {
   const cursor = c.req.query('cursor');
   let sql = `SELECT * FROM uploads WHERE event_id = ? AND status = 'done'`;
@@ -66,7 +83,7 @@ export async function listMedia(
   const page = results.slice(0, PAGE);
   const last = page[page.length - 1];
   return {
-    items: await Promise.all(page.map((u) => toMediaItem(c, event, u, aud, settings))),
+    items: await Promise.all(page.map((u) => toMediaItem(c, event, u, aud, settings, mine))),
     next: results.length > PAGE && last ? `${last.created_at}_${last.id}` : null,
   };
 }

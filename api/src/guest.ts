@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { IMAGE_TYPES, VIDEO_TYPES, type EventSettings, type PublicEvent, type UploadSlot } from '../../shared/types';
+import { GUEST_DELETE_SECONDS, IMAGE_TYPES, VIDEO_TYPES, type EventSettings, type PublicEvent, type UploadSlot } from '../../shared/types';
 import { randomToken, sha256 } from './crypto';
 import { pinHash } from './events';
 import { STORAGE_FULL, driveFor } from './google';
@@ -46,8 +46,13 @@ function requireUploads(settings: EventSettings) {
  * send none. Hashed with a secret, per event, so it can't be linked across events or back to the device.
  */
 async function guestKey(c: Ctx, event: EventRow, ipHash: string): Promise<string> {
+  return (await deviceKey(c, event)) ?? ipHash;
+}
+
+/** The guest's key from their device ID alone. Deleting needs this: an IP is shared by everyone on the venue's Wi-Fi. */
+async function deviceKey(c: Ctx, event: EventRow): Promise<string | null> {
   const id = c.req.header('X-Guest-Id');
-  if (!id || !/^[\w-]{16,64}$/.test(id)) return ipHash;
+  if (!id || !/^[\w-]{16,64}$/.test(id)) return null;
   return sha256(`guest:${id}:${event.id}:${c.env.SIGNING_KEY}`);
 }
 
@@ -100,6 +105,7 @@ guest.get('/:token', async (c) => {
       moderation: settings.moderation,
       guestMaxFiles: settings.guestMaxFiles,
       guestMaxMB: settings.guestMaxMB,
+      guestDelete: settings.guestDelete,
     },
     usage,
   };
@@ -109,7 +115,7 @@ guest.get('/:token', async (c) => {
 guest.get('/:token/media', async (c) => {
   const { event, settings } = await guestEvent(c);
   if (!settings.guestView) throw new HttpError(403, 'view_disabled', 'The host has made this an upload-only event');
-  return c.json(await listMedia(c, event, 'g', settings));
+  return c.json(await listMedia(c, event, 'g', settings, 'all', await deviceKey(c, event)));
 });
 
 guest.get('/:token/guests', async (c) => {
@@ -248,5 +254,28 @@ guest.post('/:token/uploads/:uid/complete', async (c) => {
     bumpMedia(db, event.id),
   ]);
   const done = { ...u, file_id: file.id, status: 'done' as const, hidden: review, review, created_at: now() };
-  return c.json(await toMediaItem(c, event, done, 'g', settings));
+  return c.json(await toMediaItem(c, event, done, 'g', settings, await deviceKey(c, event)));
+});
+
+/** A guest deletes one of their own uploads, from the device that sent it, soon after sending it. */
+guest.delete('/:token/uploads/:uid', async (c) => {
+  const { event, settings } = await guestEvent(c);
+  if (!settings.guestDelete) throw new HttpError(403, 'delete_disabled', 'Ask the host to remove this');
+  const mine = await deviceKey(c, event);
+  const db = c.env.DB;
+  const u = await db
+    .prepare(`SELECT * FROM uploads WHERE id = ? AND event_id = ? AND status = 'done'`)
+    .bind(c.req.param('uid'), event.id)
+    .first<UploadRow>();
+  if (!u || !mine || u.guest_hash !== mine) throw new HttpError(404, 'upload_not_found', 'You can only delete your own uploads');
+  if (u.created_at + GUEST_DELETE_SECONDS <= now()) throw new HttpError(403, 'delete_expired', 'It’s too late to delete this. Ask the host to remove it.');
+
+  const owner = await db.prepare('SELECT * FROM owners WHERE id = ?').bind(event.owner_id).first<OwnerRow>();
+  if (!owner) throw new HttpError(404, 'event_not_found');
+  const drive = await driveFor(c.env, owner);
+  await drive.trash(u.file_id!).catch((err) => {
+    if (!(err instanceof HttpError && err.code === 'drive_not_found')) throw err;
+  });
+  await db.batch([db.prepare('DELETE FROM uploads WHERE id = ?').bind(u.id), bumpMedia(db, event.id)]);
+  return c.json({ ok: true });
 });

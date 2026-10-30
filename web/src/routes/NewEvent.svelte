@@ -15,6 +15,7 @@
   let requireName = $state(false);
   let stripLocation = $state(true);
   let faceSearch = $state(false);
+  let guestDelete = $state(true);
   let autoClose = $state(false);
   let busy = $state(false);
   let error = $state('');
@@ -39,7 +40,7 @@
       const res = await owner.create({
         name: name.trim(),
         date: date || null,
-        settings: { guestView, guestDownload: guestView && guestDownload, allowVideo, moderation, requireName, stripLocation, faceSearch: guestView && faceSearch, expiresAt: autoClose ? autoCloseAt(date || null) : null },
+        settings: { guestView, guestDownload: guestView && guestDownload, allowVideo, moderation, requireName, stripLocation, faceSearch: guestView && faceSearch, guestDelete, expiresAt: autoClose ? autoCloseAt(date || null) : null },
       });
       go(`a/${res.event.id}/${res.adminToken}`, { replace: true });
     } catch (err) {
@@ -83,6 +84,7 @@
       <Toggle label="Upload videos" bind:checked={allowVideo} />
       <Toggle label="Must add their name" hint="Otherwise a name is optional." bind:checked={requireName} />
       <Toggle label="Wait for approval" hint="New uploads stay hidden until you approve them." bind:checked={moderation} />
+      <Toggle label="Delete their own uploads" hint="For an hour after sending, from the same phone." bind:checked={guestDelete} />
     </div>
 
     <div>

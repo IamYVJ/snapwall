@@ -3,9 +3,15 @@
   import { isVideo, timeAgo } from '../lib/format';
   import Icon from './Icon.svelte';
 
-  let { items, index = $bindable<number | null>(null) }: { items: MediaItem[]; index?: number | null } = $props();
+  let {
+    items,
+    index = $bindable<number | null>(null),
+    ondelete,
+  }: { items: MediaItem[]; index?: number | null; ondelete?: (item: MediaItem) => void } = $props();
 
   const item = $derived(index === null ? null : items[index]);
+  // Checked as each photo opens; the server has the final say if the time runs out while it's open.
+  const canDelete = $derived(!!ondelete && !!item?.deletableUntil && item.deletableUntil > Date.now() / 1000);
   let touchX = 0;
 
   const close = () => (index = null);
@@ -47,6 +53,9 @@
         {#if item.uploader}<strong>{item.uploader}</strong> · {/if}{timeAgo(item.createdAt)}
       </span>
       <span class="spacer"></span>
+      {#if canDelete}
+        <button class="icon-btn" onclick={() => ondelete!(item)} aria-label="Delete your upload"><Icon name="trash" /></button>
+      {/if}
       {#if item.download}
         <a class="icon-btn" href={item.download} download={item.name} aria-label="Download"><Icon name="download" /></a>
       {/if}

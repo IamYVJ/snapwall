@@ -19,6 +19,7 @@ const item = (id: string, name: string, extra: Partial<MediaItem> = {}): MediaIt
   thumb: '',
   full: '',
   download: `https://api.test/m/${id}?v=1`,
+  deletableUntil: null,
   ...extra,
 });
 
