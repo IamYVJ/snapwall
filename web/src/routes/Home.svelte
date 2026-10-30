@@ -74,7 +74,7 @@
               <span class="name">{e.name}</span>
               <span class="meta muted small">{e.date ? formatDate(e.date) : 'No date'} · {plural(e.count, 'item')}</span>
               <span class="pill" class:live={e.status === 'active'} class:off={e.status !== 'active'}>
-                <span class="dot"></span>{e.status === 'active' ? 'Live' : 'Disabled'}
+                <span class="dot"></span>{e.status !== 'active' ? 'Disabled' : e.accepting ? 'Live' : 'Uploads closed'}
               </span>
             </a>
           </li>

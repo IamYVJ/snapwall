@@ -52,6 +52,8 @@ export interface EventSummary {
   name: string;
   date: string | null;
   status: EventStatus;
+  /** Uploads are switched on and the auto-close time, if any, hasn't passed. */
+  accepting: boolean;
   count: number;
   createdAt: number;
 }

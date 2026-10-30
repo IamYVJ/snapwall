@@ -6,8 +6,14 @@ function parse(): string[] {
 
 export const router = $state({ parts: parse() });
 
-window.addEventListener('hashchange', () => {
+/** Pages without a title of their own would otherwise keep the last page's, such as an event name. */
+function navigate() {
+  document.title = 'SnapWall';
   router.parts = parse();
+}
+
+window.addEventListener('hashchange', () => {
+  navigate();
   window.scrollTo(0, 0);
 });
 
@@ -15,7 +21,7 @@ export function go(path: string, opts: { replace?: boolean } = {}) {
   const hash = `#/${path.replace(/^\//, '')}`;
   if (opts.replace) {
     history.replaceState(null, '', hash);
-    router.parts = parse();
+    navigate();
   } else {
     location.hash = hash;
   }

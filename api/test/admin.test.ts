@@ -39,6 +39,21 @@ describe('admin access', () => {
     expect(r.status).toBe(200);
     expect(r.body.guestToken).toBe(e.guestToken);
   });
+
+  test('the event list says which events still take uploads', async () => {
+    const { sha256 } = await import('../src/crypto');
+    const open = await h.seedEvent();
+    const owner = await h.env.DB.prepare('SELECT owner_id FROM events WHERE id = ?').bind(open.id).first<{ owner_id: string }>();
+    const paused = await h.seedEvent({ settings: { uploadsOpen: false } });
+    const expired = await h.seedEvent({ settings: { expiresAt: Math.floor(Date.now() / 1000) - 60 } });
+    await h.env.DB.prepare('UPDATE events SET owner_id = ? WHERE id IN (?, ?)').bind(owner!.owner_id, paused.id, expired.id).run();
+    await h.env.DB.prepare('INSERT INTO sessions (token_hash, owner_id, created_at, expires_at) VALUES (?, ?, 0, ?)')
+      .bind(await sha256('list-token'), owner!.owner_id, Math.floor(Date.now() / 1000) + 3600)
+      .run();
+    const r = await h.call('/me', { headers: { Authorization: 'Bearer list-token' } });
+    const accepting = Object.fromEntries(r.body.events.map((e: { id: string; accepting: boolean }) => [e.id, e.accepting]));
+    expect(accepting).toEqual({ [open.id]: true, [paused.id]: false, [expired.id]: false });
+  });
 });
 
 describe('settings', () => {

@@ -50,7 +50,7 @@
   >
     <header>
       <span class="meta small">
-        {#if item.uploader}<strong>{item.uploader}</strong> · {/if}{timeAgo(item.createdAt)}
+        {#if item.uploader}<strong>{item.uploader}</strong>{' · '}{/if}{timeAgo(item.createdAt)}
       </span>
       <span class="spacer"></span>
       {#if canDelete}

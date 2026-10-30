@@ -399,7 +399,7 @@
       <div class="card save-link rise stack" style="--gap: 10px">
         <p class="eyebrow">Your admin link</p>
         <p class="small muted" style="margin: 0">
-          Anyone with this link can manage the event. Bookmark it or keep it somewhere safe — you can always get back in by signing in with Google.
+          Anyone with this link can manage the event. Bookmark it or keep it somewhere safe. {event.ownerEmail} can always get back in by signing in with Google.
         </p>
         <div class="linkbox row">
           <code>{adminUrl}</code>

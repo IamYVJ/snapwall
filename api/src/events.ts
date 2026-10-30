@@ -14,6 +14,7 @@ import {
   now,
   parseSettings,
   readJson,
+  uploadsAccepting,
   type AppEnv,
   type Ctx,
   type Env,
@@ -37,14 +38,16 @@ async function countUploads(c: Ctx, eventId: string) {
 }
 
 async function toAdminEvent(c: Ctx, e: EventRow, owner: OwnerRow): Promise<AdminEvent> {
+  const settings = parseSettings(e.settings);
   return {
     id: e.id,
     name: e.name,
     date: e.date,
     status: e.status,
+    accepting: uploadsAccepting(settings),
     ...(await countUploads(c, e.id)),
     createdAt: e.created_at,
-    settings: parseSettings(e.settings),
+    settings,
     hasPin: !!e.pin_hash,
     guestToken: await decrypt(e.guest_enc, c.env.TOKEN_KEY),
     folderUrl: folderUrl(e.folder_id),

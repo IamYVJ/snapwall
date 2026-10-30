@@ -110,8 +110,8 @@
   const atLimit = $derived(!!limits && ((limits.files !== null && limits.files <= 0) || (limits.bytes !== null && limits.bytes <= 0)));
 
   const accept = $derived(event?.settings.allowVideo ? 'image/*,video/*' : 'image/*');
-  const doneCount = $derived(jobs.filter((j) => j.status === 'done').length);
   const busyCount = $derived(jobs.filter((j) => j.status === 'waiting' || j.status === 'uploading').length);
+  const failedCount = $derived(jobs.filter((j) => j.status === 'error').length);
   const overall = $derived(jobs.length ? jobs.reduce((s, j) => s + (j.status === 'done' ? 1 : j.progress), 0) / jobs.length : 0);
 
   async function load() {
@@ -317,7 +317,12 @@
         return;
       }
       job.status = 'error';
-      job.error = err instanceof ApiError ? err.message : 'Upload failed';
+      job.error =
+        err instanceof ApiError && err.code === 'drive_disconnected'
+          ? 'Not sent: the host needs to reconnect their Drive'
+          : err instanceof ApiError
+            ? err.message
+            : 'Upload failed';
       job.canRetry = canRetry(err);
       // Nothing else can be saved either, so don't make every queued file fail one by one.
       if (err instanceof ApiError && err.code === 'storage_full') {
@@ -482,7 +487,8 @@
     </section>
 
     {#if !event.settings.uploadsOpen}
-      <p class="notice muted small">Uploads are closed. {event.settings.guestView ? 'You can still browse the wall.' : ''}</p>
+      <!-- Without the wall, the card below says it. -->
+      {#if event.settings.guestView}<p class="notice muted small">Uploads are closed. You can still browse the wall.</p>{/if}
     {:else if limits}
       <p class="notice muted small">
         {#if atLimit}
@@ -540,10 +546,15 @@
       {/if}
     {:else}
       <div class="card upload-only stack" style="--gap: 12px">
-        <h2 class="h2">Share your photos with the host</h2>
-        <p class="muted" style="margin: 0">
-          This is a private collection. Your photos and videos go straight to the host — other guests can’t see them.
-        </p>
+        {#if event.settings.uploadsOpen}
+          <h2 class="h2">Share your photos with the host</h2>
+          <p class="muted" style="margin: 0">
+            This is a private collection. Your photos and videos go straight to the host — other guests can’t see them.
+          </p>
+        {:else}
+          <h2 class="h2">Uploads are closed</h2>
+          <p class="muted" style="margin: 0">The host is no longer collecting photos for this event. Everything shared went to the host.</p>
+        {/if}
         {#if sentHere}<p class="small" style="margin: 0"><strong>{plural(sentHere, 'file')}</strong> sent from this device. Thank you!</p>{/if}
       </div>
     {/if}
@@ -563,7 +574,13 @@
   {#if jobs.length && sheetOpen}
     <aside class="sheet rise" aria-label="Uploads">
       <div class="sheet-head row">
-        <strong>{busyCount ? `Uploading ${doneCount + 1 > jobs.length ? jobs.length : doneCount + 1} of ${jobs.length}` : 'Uploads finished'}</strong>
+        <strong>
+          {busyCount
+            ? `Uploading ${Math.min(jobs.length - busyCount + 1, jobs.length)} of ${jobs.length}`
+            : failedCount
+              ? `${failedCount} of ${jobs.length} not sent`
+              : 'Uploads finished'}
+        </strong>
         <span class="spacer"></span>
         {#if !busyCount}<button class="link" onclick={clearFinished}>Clear</button>{/if}
         <button class="link" onclick={() => (sheetOpen = false)}>Hide</button>

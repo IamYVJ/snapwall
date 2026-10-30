@@ -3,7 +3,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { DriveStorage, EventSummary, Me } from '../../shared/types';
 import { decrypt, encrypt, randomToken, sha256 } from './crypto';
 import { DRIVE_SCOPE, authUrl, decodeIdToken, driveFor, exchangeCode, revokeToken } from './google';
-import { HttpError, now, type AppEnv, type Ctx, type EventRow, type OwnerRow } from './util';
+import { HttpError, now, parseSettings, uploadsAccepting, type AppEnv, type Ctx, type EventRow, type OwnerRow } from './util';
 
 const SESSION_TTL = 30 * 86400;
 const STATE_COOKIE = 'sw_oauth_state';
@@ -98,7 +98,15 @@ auth.post('/logout', async (c) => {
 export const me = new Hono<AppEnv>();
 
 export function toSummary(e: EventRow & { count: number }): EventSummary {
-  return { id: e.id, name: e.name, date: e.date, status: e.status, count: e.count, createdAt: e.created_at };
+  return {
+    id: e.id,
+    name: e.name,
+    date: e.date,
+    status: e.status,
+    accepting: uploadsAccepting(parseSettings(e.settings)),
+    count: e.count,
+    createdAt: e.created_at,
+  };
 }
 
 me.get('/', async (c) => {
