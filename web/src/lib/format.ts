@@ -6,6 +6,25 @@ export function formatDate(date: string | null): string {
   return d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 }
 
+export const AUTO_CLOSE_DAYS = 7;
+
+/**
+ * When uploads close on their own, in seconds: at 11:59 pm on the 7th day after the event date (local time). With no
+ * date, or one so long ago that this has passed, a week from now instead, so turning it on never closes uploads at once.
+ */
+export function autoCloseAt(date: string | null, now = Date.now()): number {
+  const week = Math.floor(now / 1000) + AUTO_CLOSE_DAYS * 86400;
+  if (!date) return week;
+  const [y, m, d] = date.split('-').map(Number);
+  const dated = Math.floor(new Date(y, m - 1, d + AUTO_CLOSE_DAYS, 23, 59).getTime() / 1000);
+  return dated > now / 1000 ? dated : week;
+}
+
+/** e.g. "Wed 4 Nov, 11:59 pm", in the viewer's own locale. */
+export function closeLabel(seconds: number): string {
+  return new Date(seconds * 1000).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+}
+
 export function plural(n: number, one: string, many = `${one}s`): string {
   return `${n.toLocaleString()} ${n === 1 ? one : many}`;
 }

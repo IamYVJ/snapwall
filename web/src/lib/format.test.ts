@@ -1,5 +1,16 @@
 import { expect, test } from 'vitest';
-import { bytesLabel, driveSpace, plural, sizeLabel } from './format';
+import { autoCloseAt, bytesLabel, driveSpace, plural, sizeLabel } from './format';
+
+test('autoCloseAt', () => {
+  const now = new Date(2026, 9, 30, 15, 0).getTime();
+  const sec = (d: Date) => d.getTime() / 1000;
+  // The last minute of the 7th day after the event.
+  expect(autoCloseAt('2026-10-28', now)).toBe(sec(new Date(2026, 10, 4, 23, 59)));
+  expect(autoCloseAt('2026-12-31', now)).toBe(sec(new Date(2027, 0, 7, 23, 59)));
+  // No date, or an event long past: a week from now.
+  expect(autoCloseAt(null, now)).toBe(now / 1000 + 7 * 86400);
+  expect(autoCloseAt('2026-01-01', now)).toBe(now / 1000 + 7 * 86400);
+});
 
 test('plural', () => {
   expect(plural(1, 'file')).toBe('1 file');

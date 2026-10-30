@@ -13,7 +13,7 @@
   import Toggle from '../components/Toggle.svelte';
   import Wordmark from '../components/Wordmark.svelte';
   import { ApiError, adminApi, session, signInUrl, type EventPatch } from '../lib/api';
-  import { copyText, formatDate, isVideo, plural, saveBlob, sizeLabel } from '../lib/format';
+  import { AUTO_CLOSE_DAYS, autoCloseAt, closeLabel, copyText, formatDate, isVideo, plural, saveBlob, sizeLabel } from '../lib/format';
   import { go, href, pageUrl } from '../lib/router.svelte';
   import { streamsToDisk, zipMedia, type ZipProgress, type ZipResult } from '../lib/zip';
 
@@ -60,6 +60,8 @@
   const guestUrl = $derived(event ? pageUrl(`e/${event.guestToken}`) : '');
   const adminUrl = $derived(adminToken ? pageUrl(`a/${eventId}/${adminToken}`) : newAdminLink);
   const expiresLocal = $derived(event?.settings.expiresAt ? toLocalInput(event.settings.expiresAt) : '');
+  // Checked when the event loads or changes; the 15-second refresh keeps it close enough.
+  const expired = $derived(!!event?.settings.expiresAt && event.settings.expiresAt <= Date.now() / 1000);
 
   function toLocalInput(sec: number): string {
     const d = new Date(sec * 1000);
@@ -373,7 +375,13 @@
     <section class="hero rise">
       <div class="row" style="gap: 10px">
         <span class="pill" class:live={event.status === 'active'} class:off={event.status !== 'active'}>
-          <span class="dot"></span>{event.status === 'active' ? (event.settings.uploadsOpen ? 'Live' : 'Uploads paused') : 'Disabled'}
+          <span class="dot"></span>{event.status !== 'active'
+            ? 'Disabled'
+            : !event.settings.uploadsOpen
+              ? 'Uploads paused'
+              : expired
+                ? 'Uploads closed'
+                : 'Live'}
         </span>
         {#if event.date}<span class="eyebrow">{formatDate(event.date)}</span>{/if}
       </div>
@@ -410,6 +418,15 @@
         <p class="eyebrow">Controls</p>
         <div>
           <Toggle label="Accept uploads" checked={event.settings.uploadsOpen} onchange={setting('uploadsOpen')} disabled={saving} />
+          <Toggle
+            label="Close uploads automatically"
+            hint={event.settings.expiresAt === null
+              ? `${AUTO_CLOSE_DAYS} days after the event date, or a week from now if it has none.`
+              : `${expired ? 'Closed' : 'Closes'} ${closeLabel(event.settings.expiresAt)}. Change the time below.`}
+            checked={event.settings.expiresAt !== null}
+            onchange={(on) => patch({ settings: { expiresAt: on ? autoCloseAt(event!.date) : null } })}
+            disabled={saving}
+          />
           <Toggle
             label="Guests can see the wall"
             hint="Off makes it upload-only."
@@ -502,18 +519,20 @@
               {/if}
             </select>
           </label>
-          <label class="field">
-            <span>Close uploads at</span>
-            <input
-              class="input"
-              type="datetime-local"
-              value={expiresLocal}
-              onchange={(e) => {
-                const v = (e.currentTarget as HTMLInputElement).value;
-                patch({ settings: { expiresAt: v ? Math.floor(new Date(v).getTime() / 1000) : null } });
-              }}
-            />
-          </label>
+          {#if event.settings.expiresAt !== null}
+            <label class="field">
+              <span>Close uploads at</span>
+              <input
+                class="input"
+                type="datetime-local"
+                value={expiresLocal}
+                onchange={(e) => {
+                  const v = (e.currentTarget as HTMLInputElement).value;
+                  patch({ settings: { expiresAt: v ? Math.floor(new Date(v).getTime() / 1000) : null } });
+                }}
+              />
+            </label>
+          {/if}
         </div>
 
         <div class="row pinrow">

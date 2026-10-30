@@ -3,6 +3,7 @@
   import Toggle from '../components/Toggle.svelte';
   import Wordmark from '../components/Wordmark.svelte';
   import { ApiError, owner, session, signInUrl } from '../lib/api';
+  import { AUTO_CLOSE_DAYS, autoCloseAt, closeLabel } from '../lib/format';
   import { go } from '../lib/router.svelte';
 
   let name = $state('');
@@ -14,6 +15,7 @@
   let requireName = $state(false);
   let stripLocation = $state(true);
   let faceSearch = $state(false);
+  let autoClose = $state(false);
   let busy = $state(false);
   let error = $state('');
 
@@ -37,7 +39,7 @@
       const res = await owner.create({
         name: name.trim(),
         date: date || null,
-        settings: { guestView, guestDownload: guestView && guestDownload, allowVideo, moderation, requireName, stripLocation, faceSearch: guestView && faceSearch },
+        settings: { guestView, guestDownload: guestView && guestDownload, allowVideo, moderation, requireName, stripLocation, faceSearch: guestView && faceSearch, expiresAt: autoClose ? autoCloseAt(date || null) : null },
       });
       go(`a/${res.event.id}/${res.adminToken}`, { replace: true });
     } catch (err) {
@@ -81,6 +83,17 @@
       <Toggle label="Upload videos" bind:checked={allowVideo} />
       <Toggle label="Must add their name" hint="Otherwise a name is optional." bind:checked={requireName} />
       <Toggle label="Wait for approval" hint="New uploads stay hidden until you approve them." bind:checked={moderation} />
+    </div>
+
+    <div>
+      <p class="eyebrow" style="margin-bottom: 4px">Uploads</p>
+      <Toggle
+        label="Close automatically"
+        hint={autoClose
+          ? `Closes ${closeLabel(autoCloseAt(date || null))}. You can change the time later.`
+          : `${AUTO_CLOSE_DAYS} days after the event date, or a week from now if it has none.`}
+        bind:checked={autoClose}
+      />
     </div>
 
     <div>
