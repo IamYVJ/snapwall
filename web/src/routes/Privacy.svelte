@@ -3,7 +3,8 @@
 </script>
 
 <div class="page narrow prose">
-  <header class="top"><Wordmark /></header>
+  <!-- ./#/ so the links also work from the static privacy.html that the build makes from this page. -->
+  <header class="top"><Wordmark href="./#/" /></header>
   <h1 class="title">Privacy</h1>
   <p class="lede">SnapWall is built so your photos never sit anywhere but your own storage.</p>
 
@@ -59,7 +60,7 @@
     SnapWall’s access and erases your account and all events. Files in your Drive stay yours.
   </p>
 
-  <p class="muted small" style="margin-top: 48px"><a href="#/">Back to SnapWall</a></p>
+  <p class="muted small" style="margin-top: 48px"><a href="./#/">Back to SnapWall</a></p>
 </div>
 
 <style>

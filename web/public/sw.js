@@ -23,7 +23,8 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(req)
         .then((res) => {
-          if (res.ok) {
+          // Only the app itself is the shell; privacy.html is a separate page.
+          if (res.ok && url.pathname.endsWith('/')) {
             const copy = res.clone();
             caches.open(CACHE).then((c) => c.put('./', copy));
           }
