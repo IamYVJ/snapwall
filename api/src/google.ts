@@ -111,6 +111,7 @@ export interface DriveFile {
   size?: string;
   parents?: string[];
   trashed?: boolean;
+  md5Checksum?: string;
   appProperties?: Record<string, string>;
   thumbnailLink?: string;
 }

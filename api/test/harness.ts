@@ -94,14 +94,15 @@ export async function startHarness() {
       review: 0,
       ip_hash: 'ip',
       guest_hash: null,
+      md5: null,
       created_at: now() - 1000 + seq,
       ...fields,
     };
     await env.DB.prepare(
-      `INSERT INTO uploads (id, event_id, file_id, name, mime, size, uploader, status, hidden, review, ip_hash, guest_hash, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO uploads (id, event_id, file_id, name, mime, size, uploader, status, hidden, review, ip_hash, guest_hash, md5, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-      .bind(u.id, u.event_id, u.file_id, u.name, u.mime, u.size, u.uploader, u.status, u.hidden, u.review, u.ip_hash, u.guest_hash, u.created_at)
+      .bind(u.id, u.event_id, u.file_id, u.name, u.mime, u.size, u.uploader, u.status, u.hidden, u.review, u.ip_hash, u.guest_hash, u.md5, u.created_at)
       .run();
     return u;
   }

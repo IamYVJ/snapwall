@@ -29,6 +29,8 @@
     /** The upload once it's on the wall, so the guest can still delete it for a while. */
     item?: MediaItem;
     deleted?: boolean;
+    /** An exact copy of a file already in the event, so the server skipped it. */
+    duplicate?: boolean;
   }
 
   const pinKey = `snapwall.pin.${token}`;
@@ -307,8 +309,14 @@
         event.count++;
       }
     } catch (err) {
-      job.status = 'error';
       job.paused = false;
+      if (err instanceof ApiError && err.code === 'duplicate') {
+        job.status = 'done';
+        job.progress = 1;
+        job.duplicate = true;
+        return;
+      }
+      job.status = 'error';
       job.error = err instanceof ApiError ? err.message : 'Upload failed';
       job.canRetry = canRetry(err);
       // Nothing else can be saved either, so don't make every queued file fail one by one.
@@ -567,6 +575,8 @@
             <span class="jname">{job.file.name}</span>
             {#if job.deleted}
               <span class="muted small">Deleted</span>
+            {:else if job.duplicate}
+              <span class="muted small">Already uploaded</span>
             {:else if job.status === 'done'}
               {#if canDelete(job.item)}<button class="link small" onclick={() => removeMine(job.item!)}>Delete</button>{/if}
               <span class="ok"><Icon name="check" size={16} stroke={2.2} /></span>

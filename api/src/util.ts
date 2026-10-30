@@ -78,6 +78,8 @@ export interface UploadRow {
   review: number;
   ip_hash: string;
   guest_hash: string | null;
+  /** Drive's MD5 checksum, once finished. Null for uploads finished before it was recorded. */
+  md5: string | null;
   created_at: number;
 }
 

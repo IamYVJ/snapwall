@@ -227,7 +227,10 @@ guest.post('/:token/uploads', async (c) => {
   return c.json(slot, 201);
 });
 
-/** Confirms an upload. The file is checked against Drive so a guest can't attach arbitrary files. */
+/**
+ * Confirms an upload. The file is checked against Drive so a guest can't attach arbitrary files. An exact copy of a
+ * file already in the event (same Drive checksum), say one photo forwarded between guests, is moved to the trash.
+ */
 guest.post('/:token/uploads/:uid/complete', async (c) => {
   const { event, settings } = await guestEvent(c);
   const db = c.env.DB;
@@ -241,19 +244,28 @@ guest.post('/:token/uploads/:uid/complete', async (c) => {
 
   const owner = await db.prepare('SELECT * FROM owners WHERE id = ?').bind(event.owner_id).first<OwnerRow>();
   const drive = await driveFor(c.env, owner!);
-  const file = await drive.getFile(fileId, 'id,parents,appProperties,mimeType,size');
+  const file = await drive.getFile(fileId, 'id,parents,appProperties,mimeType,size,md5Checksum');
   if (!file.parents?.includes(event.folder_id) || file.appProperties?.snapwallUpload !== u.id) {
     throw new HttpError(400, 'upload_mismatch');
   }
 
+  const md5 = file.md5Checksum ?? null;
   const review = settings.moderation ? 1 : 0;
-  await db.batch([
-    db
-      .prepare(`UPDATE uploads SET file_id = ?, status = 'done', hidden = ?, review = ?, size = ?, created_at = ? WHERE id = ?`)
-      .bind(file.id, review, review, Number(file.size ?? u.size), now(), u.id),
-    bumpMedia(db, event.id),
-  ]);
-  const done = { ...u, file_id: file.id, status: 'done' as const, hidden: review, review, created_at: now() };
+  // The copy check and the save are one statement, so two copies finishing at once can't both get in.
+  const saved = await db
+    .prepare(
+      `UPDATE uploads SET file_id = ?, status = 'done', hidden = ?, review = ?, size = ?, md5 = ?, created_at = ?
+       WHERE id = ? AND NOT EXISTS (SELECT 1 FROM uploads WHERE event_id = ? AND md5 = ? AND status = 'done')`,
+    )
+    .bind(file.id, review, review, Number(file.size ?? u.size), md5, now(), u.id, event.id, md5)
+    .run();
+  if (!saved.meta.changes) {
+    await drive.trash(file.id).catch(() => undefined);
+    await db.prepare('DELETE FROM uploads WHERE id = ?').bind(u.id).run();
+    throw new HttpError(409, 'duplicate', 'Already uploaded');
+  }
+  await bumpMedia(db, event.id).run();
+  const done = { ...u, file_id: file.id, status: 'done' as const, hidden: review, review, md5, created_at: now() };
   return c.json(await toMediaItem(c, event, done, 'g', settings, await deviceKey(c, event)));
 });
 

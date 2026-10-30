@@ -306,3 +306,69 @@ describe('guests deleting their own uploads', () => {
     expect((await h.call(`/g/${e.guestToken}`)).body.settings.guestDelete).toBe(false);
   });
 });
+
+describe('exact copies', () => {
+  /** Drive answering for the guest's freshly uploaded file, with the given checksum. Trash requests are recorded. */
+  function driveWithFile(uploadId: string, md5: string) {
+    return fakeDrive((url, init) =>
+      init.method === 'PATCH'
+        ? driveJson({})
+        : driveJson({ id: 'newfile0000', parents: ['folder'], appProperties: { snapwallUpload: uploadId }, mimeType: 'image/jpeg', size: '1000', md5Checksum: md5 }),
+    );
+  }
+  const complete = (token: string, id: string) =>
+    h.call(`/g/${token}/uploads/${id}/complete`, { method: 'POST', json: { fileId: 'newfile0000' } });
+  const row = (id: string) => h.env.DB.prepare('SELECT status, md5 FROM uploads WHERE id = ?').bind(id).first();
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  test('a new file is saved with its checksum', async () => {
+    const e = await h.seedEvent({ drive: true });
+    const u = await h.seedUpload(e.id, { status: 'pending', file_id: null });
+    driveWithFile(u.id, 'aaa111');
+    expect((await complete(e.guestToken, u.id)).status).toBe(200);
+    expect(await row(u.id)).toEqual({ status: 'done', md5: 'aaa111' });
+  });
+
+  test('a copy of a file already in the event is trashed and skipped', async () => {
+    const e = await h.seedEvent({ drive: true });
+    await h.seedUpload(e.id, { md5: 'aaa111' });
+    const u = await h.seedUpload(e.id, { status: 'pending', file_id: null });
+    const calls = driveWithFile(u.id, 'aaa111');
+    const r = await complete(e.guestToken, u.id);
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe('duplicate');
+    expect(calls.filter((c) => c.method === 'PATCH').map((c) => c.url.pathname)).toEqual(['/drive/v3/files/newfile0000']);
+    expect(await row(u.id)).toBeNull();
+  });
+
+  test('copies in other events, and unfinished uploads, don’t count', async () => {
+    const e = await h.seedEvent({ drive: true });
+    const other = await h.seedEvent();
+    await h.seedUpload(other.id, { md5: 'aaa111' });
+    await h.seedUpload(e.id, { md5: 'aaa111', status: 'pending' });
+    const u = await h.seedUpload(e.id, { status: 'pending', file_id: null });
+    driveWithFile(u.id, 'aaa111');
+    expect((await complete(e.guestToken, u.id)).status).toBe(200);
+  });
+});
+
+test('two copies finishing at the same moment keep only one', async () => {
+  const e = await h.seedEvent({ drive: true });
+  const a = await h.seedUpload(e.id, { status: 'pending', file_id: null });
+  const b = await h.seedUpload(e.id, { status: 'pending', file_id: null });
+  fakeDrive((url, init) => {
+    const id = url.pathname.split('/').pop()!;
+    return init.method === 'PATCH'
+      ? driveJson({})
+      : driveJson({ id, parents: ['folder'], appProperties: { snapwallUpload: id === 'fileaaaaaaa' ? a.id : b.id }, size: '1000', md5Checksum: 'same' });
+  });
+  try {
+    const done = (u: string, fileId: string) => h.call(`/g/${e.guestToken}/uploads/${u}/complete`, { method: 'POST', json: { fileId } });
+    const results = await Promise.all([done(a.id, 'fileaaaaaaa'), done(b.id, 'filebbbbbbb')]);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+    expect(await h.env.DB.prepare(`SELECT COUNT(*) AS n FROM uploads WHERE event_id = ?`).bind(e.id).first('n')).toBe(1);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
