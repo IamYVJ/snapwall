@@ -43,6 +43,8 @@ export async function scanFaces<T extends { id: string }, B>(opts: {
   detect: (image: B) => Promise<Descriptor[]>;
   signal: AbortSignal;
   onProgress?: (done: number, total: number) => void;
+  /** Called with each photo's faces as soon as they are found, so matches can be shown before the scan ends. */
+  onFaces?: (item: T, faces: Descriptor[]) => void;
   prefetch?: number;
 }): Promise<{ failed: number }> {
   const todo = opts.items.filter((i) => !opts.cache.has(i.id));
@@ -59,7 +61,9 @@ export async function scanFaces<T extends { id: string }, B>(opts: {
     if (i + prefetch < todo.length) pending.push(start(todo[i + prefetch]));
     try {
       if (!loaded) throw new Error('not loaded');
-      opts.cache.set(todo[i].id, await opts.detect(loaded.image));
+      const faces = await opts.detect(loaded.image);
+      opts.cache.set(todo[i].id, faces);
+      if (!opts.signal.aborted) opts.onFaces?.(todo[i], faces);
     } catch {
       failed++;
     }

@@ -1,25 +1,32 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import type { MediaItem } from '../../../shared/types';
-  import { FaceError, matching, scanFaces, type Descriptor } from '../lib/faces';
+  import { closest, FaceError, MATCH_DISTANCE, matching, scanFaces, type Descriptor } from '../lib/faces';
   import { facesIn, loadFaceModel, selfieFace } from '../lib/faceModel';
   import { plural } from '../lib/format';
   import Modal from './Modal.svelte';
 
   let {
     open = $bindable(false),
+    progress = $bindable(null),
     list,
     onmatches,
   }: {
     open?: boolean;
+    /** How far the search has got while it carries on behind the matches already shown, else null. */
+    progress?: { done: number; total: number } | null;
     /** Every photo on the wall, not just the ones loaded so far. */
     list: () => Promise<MediaItem[]>;
-    onmatches: (items: MediaItem[]) => void;
+    /** Called with every match so far: first when one turns up, then again as more do. `more` is false the first time. */
+    onmatches: (items: MediaItem[], more: boolean) => void;
   } = $props();
 
   let phase = $state<'intro' | 'loading' | 'scanning' | 'none' | 'error'>('intro');
   let message = $state('');
   let done = $state(0);
   let total = $state(0);
+  /** True once matches are on the wall and the sheet has closed, with the scan still going. */
+  let behind = $state(false);
   let camera: HTMLInputElement;
   let library: HTMLInputElement;
   let abort: AbortController | null = null;
@@ -45,39 +52,67 @@
       const me = await selfieFace(file);
       const photos = (await list()).filter((i) => i.mime.startsWith('image/'));
       if (signal.aborted) return;
+      const isMe = (f: Descriptor[]) => closest(me, f) < MATCH_DISTANCE;
+      // Photos read by an earlier search match at once; the rest join as the scan reaches them.
+      const ids = new Set(matching(me, photos, faces).map((p) => p.id));
+      const show = () => {
+        // In wall order, whichever order they were found in.
+        onmatches(photos.filter((p) => ids.has(p.id)), behind);
+        if (!behind) {
+          behind = true;
+          progress = { done, total };
+          open = false;
+        }
+      };
       phase = 'scanning';
+      if (ids.size) show();
       await scanFaces({
         items: photos,
         cache: faces,
         load: thumbnail,
         detect: facesIn,
         signal,
-        onProgress: (d, t) => ((done = d), (total = t)),
+        onProgress: (d, t) => {
+          done = d;
+          total = t;
+          if (behind) progress = { done, total };
+        },
+        onFaces: (item, f) => {
+          if (!isMe(f)) return;
+          ids.add(item.id);
+          show();
+        },
       });
-      const found = matching(me, photos, faces);
-      if (found.length) {
-        onmatches(found);
-        open = false;
-      } else {
-        phase = 'none';
-      }
+      if (behind) finish();
+      else phase = 'none';
     } catch (err) {
       if (signal.aborted) return;
+      // The matches already shown stay; the photos it didn't get to are read next time.
+      if (behind) return finish();
       phase = 'error';
       message = err instanceof FaceError ? err.message : 'Something went wrong. Please try again.';
       if (err instanceof FaceError && err.code === 'no_face') message += '. Try one where your face is clear and facing the camera.';
     }
   }
 
-  function stop() {
-    abort?.abort();
+  function finish() {
+    behind = false;
+    progress = null;
     phase = 'intro';
   }
 
-  // Closing the sheet stops a search in progress and starts the next one from the beginning.
+  /** Stops the search, whether it is on the sheet or carrying on behind the wall. */
+  export function stop() {
+    abort?.abort();
+    finish();
+  }
+
+  // Closing the sheet stops a search still on it. Reopening it (to try another photo) stops one carrying on behind.
   $effect(() => {
-    if (!open) stop();
+    if (behind ? open : !open) stop();
   });
+
+  onDestroy(() => abort?.abort());
 
   const choose = (input: HTMLInputElement) => {
     input.value = '';

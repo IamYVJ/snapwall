@@ -62,6 +62,8 @@
   let findOpen = $state(false);
   /** Photos Find me matched, shown instead of the whole wall until the guest goes back. */
   let matches = $state<MediaItem[] | null>(null);
+  let findMe = $state<FindMe>();
+  let findProgress = $state<{ done: number; total: number } | null>(null);
   const shown = $derived(matches ?? items);
 
   let jobs = $state<Job[]>([]);
@@ -195,7 +197,15 @@
     return all;
   }
 
-  function showMatches(found: MediaItem[] | null) {
+  function showMatches(found: MediaItem[] | null, more = false) {
+    if (more && found) {
+      // More turned up while the search carries on: keep the photo the guest has open in front of them.
+      const id = open === null ? null : shown[open]?.id;
+      matches = found;
+      if (id) open = found.findIndex((i) => i.id === id);
+      return;
+    }
+    if (!found) findMe?.stop();
     matches = found;
     open = null;
     selected = new Set();
@@ -463,10 +473,24 @@
     {#if event.settings.guestView}
       {#if matches}
         <div class="found row small">
-          <span><strong>You’re in {plural(matches.length, 'photo')}.</strong> <span class="muted">Found on this phone.</span></span>
+          {#if findProgress}
+            <span aria-live="polite">
+              <strong>You’re in {plural(matches.length, 'photo')} so far.</strong>
+              <span class="muted">Still looking: {findProgress.done.toLocaleString()} of {findProgress.total.toLocaleString()}…</span>
+            </span>
+          {:else}
+            <span><strong>You’re in {plural(matches.length, 'photo')}.</strong> <span class="muted">Found on this phone.</span></span>
+          {/if}
           <span class="spacer"></span>
-          <button class="link" onclick={() => (findOpen = true)}>Try another photo</button>
+          {#if findProgress}
+            <button class="link" onclick={() => findMe?.stop()}>Stop looking</button>
+          {:else}
+            <button class="link" onclick={() => (findOpen = true)}>Try another photo</button>
+          {/if}
           <button class="link" onclick={() => showMatches(null)}>Show everyone</button>
+          {#if findProgress}
+            <div class="bar"><span style="width: {findProgress.total ? (findProgress.done / findProgress.total) * 100 : 0}%"></span></div>
+          {/if}
         </div>
       {:else}
         <GuestFilter {guests} value={by} onchange={showGuest} />
@@ -553,7 +577,7 @@
   <Lightbox items={shown} bind:index={open} />
 
   {#if event.settings.faceSearch}
-    <FindMe bind:open={findOpen} list={allMedia} onmatches={showMatches} />
+    <FindMe bind:this={findMe} bind:open={findOpen} bind:progress={findProgress} list={allMedia} onmatches={showMatches} />
   {/if}
 
   <Modal bind:open={installHelp} title="Add to home screen">
@@ -633,6 +657,19 @@
     margin-bottom: 14px;
     border-radius: 14px;
     background: var(--shade);
+  }
+  .found .bar {
+    flex-basis: 100%;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--line);
+    overflow: hidden;
+  }
+  .found .bar span {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.3s ease;
   }
   .empty {
     padding: 64px 0;

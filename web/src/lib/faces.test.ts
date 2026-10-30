@@ -68,7 +68,9 @@ describe('scanning photos', () => {
 
   test('skips photos that fail, so the next search tries them again', async () => {
     const cache = new Map<string, Descriptor[]>();
+    const seen: string[] = [];
     const res = await scanFaces({
+      onFaces: (item) => seen.push(item.id),
       items,
       cache,
       load: async (item) => {
@@ -82,6 +84,7 @@ describe('scanning photos', () => {
       signal: new AbortController().signal,
     });
     expect(res.failed).toBe(2);
+    expect(seen).toEqual(['a', 'c', 'e', 'f']);
     expect(cache.has('b')).toBe(false);
     expect(cache.has('d')).toBe(false);
     expect(cache.size).toBe(4);
@@ -90,6 +93,7 @@ describe('scanning photos', () => {
   test('stops when cancelled and keeps what it found', async () => {
     const abort = new AbortController();
     const cache = new Map<string, Descriptor[]>();
+    const seen: string[] = [];
     const run = scanFaces({
       items,
       cache,
@@ -99,8 +103,11 @@ describe('scanning photos', () => {
         return [];
       },
       signal: abort.signal,
+      onFaces: (item) => seen.push(item.id),
     });
     await expect(run).rejects.toThrow();
     expect([...cache.keys()]).toEqual(['a', 'b']);
+    // Nothing is reported once cancelled, so a stopped search can't put its matches back on the wall.
+    expect(seen).toEqual(['a']);
   });
 });
