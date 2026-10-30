@@ -182,6 +182,59 @@ describe('deleting', () => {
   });
 });
 
+describe('renaming the event', () => {
+  /** A Drive whose event folder is called `current`; returns the names it was renamed to. */
+  function folderCalled(current: string) {
+    const renamed: string[] = [];
+    const calls = fakeDrive((_url, init) => {
+      if (init.method === 'PATCH') renamed.push(JSON.parse(String(init.body)).name);
+      return driveJson({ id: 'folder', name: current });
+    });
+    return { calls, renamed };
+  }
+
+  test('renames the Drive folder to match the new name and date', async () => {
+    const e = await h.seedEvent({ drive: true });
+    const { renamed } = folderCalled('Test Event');
+    try {
+      const r = await h.call(`/events/${e.id}`, { method: 'PATCH', headers: e.admin, json: { name: 'Maya & Arjun', date: '2026-11-07' } });
+      expect(r.body).toMatchObject({ name: 'Maya & Arjun', date: '2026-11-07' });
+      expect(renamed).toEqual(['Maya & Arjun · 2026-11-07']);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('leaves a folder the host renamed in Drive', async () => {
+    const e = await h.seedEvent({ drive: true });
+    const { renamed } = folderCalled('Our wedding photos');
+    try {
+      await h.call(`/events/${e.id}`, { method: 'PATCH', headers: e.admin, json: { date: '2026-11-07' } });
+      expect(renamed).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('other changes leave Drive alone', async () => {
+    const e = await h.seedEvent({ drive: true });
+    const { calls } = folderCalled('Test Event');
+    try {
+      await h.call(`/events/${e.id}`, { method: 'PATCH', headers: e.admin, json: { name: 'Test Event', settings: { moderation: true } } });
+      expect(calls).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('saves even when Drive cannot be reached', async () => {
+    const e = await h.seedEvent();
+    const r = await h.call(`/events/${e.id}`, { method: 'PATCH', headers: e.admin, json: { name: 'New name' } });
+    expect(r.status).toBe(200);
+    expect(r.body.name).toBe('New name');
+  });
+});
+
 describe('Drive space', () => {
   test('the event page can ask how full the Drive is', async () => {
     const e = await h.seedEvent({ drive: true });

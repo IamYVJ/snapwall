@@ -16,12 +16,14 @@ import {
   readJson,
   type AppEnv,
   type Ctx,
+  type Env,
   type EventRow,
   type OwnerRow,
   type UploadRow,
 } from './util';
 
 const folderUrl = (id: string) => `https://drive.google.com/drive/folders/${id}`;
+const folderName = (name: string, date: string | null) => (date ? `${name} · ${date}` : name);
 export const pinHash = (eventId: string, pin: string) => sha256(`${eventId}:${pin}`);
 
 async function countUploads(c: Ctx, eventId: string) {
@@ -88,7 +90,7 @@ events.post('/', async (c) => {
 
   const drive = await driveFor(c.env, owner);
   const root = await ensureRootFolder(c.env, owner, drive);
-  const folderId = await drive.createFolder(date ? `${name} · ${date}` : name, root);
+  const folderId = await drive.createFolder(folderName(name, date), root);
 
   const id = randomToken(9);
   const guestToken = randomToken(24);
@@ -135,16 +137,20 @@ events.patch('/:id', async (c) => {
   const body = await readJson(c);
   const sets: string[] = [];
   const args: (string | null)[] = [];
+  let name = event.name;
+  let date = event.date;
 
   if (body.name !== undefined) {
-    const name = cleanText(body.name, 80);
-    if (!name) throw new HttpError(400, 'name_required');
+    const cleaned = cleanText(body.name, 80);
+    if (!cleaned) throw new HttpError(400, 'name_required');
+    name = cleaned;
     sets.push('name = ?');
     args.push(name);
   }
   if (body.date !== undefined) {
+    date = cleanDate(body.date);
     sets.push('date = ?');
-    args.push(cleanDate(body.date));
+    args.push(date);
   }
   if (body.status !== undefined) {
     if (body.status !== 'active' && body.status !== 'disabled') throw new HttpError(400, 'bad_status');
@@ -167,9 +173,24 @@ events.patch('/:id', async (c) => {
       .bind(...args, event.id)
       .run();
   }
+  if (folderName(name, date) !== folderName(event.name, event.date)) await renameFolder(c.env, owner, event, folderName(name, date));
   const updated = await c.env.DB.prepare('SELECT * FROM events WHERE id = ?').bind(event.id).first<EventRow>();
   return c.json(await toAdminEvent(c, updated!, owner));
 });
+
+/**
+ * Keeps the Drive folder's name in step with the event. Only a folder that still has the name SnapWall gave it is
+ * renamed, so a name the host chose in Drive stays. The event is already saved, so a Drive problem is ignored.
+ */
+async function renameFolder(env: Env, owner: OwnerRow, event: EventRow, to: string) {
+  try {
+    const drive = await driveFor(env, owner);
+    const folder = await drive.getFile(event.folder_id, 'name');
+    if (folder.name === folderName(event.name, event.date)) await drive.rename(event.folder_id, to);
+  } catch {
+    /* the folder keeps its old name */
+  }
+}
 
 /** Issues a new guest or admin link. The old one stops working immediately. */
 events.post('/:id/rotate', async (c) => {

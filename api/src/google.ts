@@ -151,7 +151,7 @@ export class Drive {
     const headers = new Headers(init.headers);
     headers.set('Authorization', `Bearer ${this.token}`);
     // A rate-limited request was never carried out, so any request may repeat it. After a server error or a dropped
-    // connection it may have been, so only reads and the idempotent trash PATCH retry (a POST could add a folder twice).
+    // connection it may have been, so only reads and idempotent PATCHes (trash, rename) retry (a POST could add a folder twice).
     const repeatable = !init.method || init.method === 'GET' || init.method === 'PATCH';
     for (let attempt = 0; ; attempt++) {
       const last = attempt === RETRY_DELAYS_MS.length;
@@ -196,6 +196,14 @@ export class Drive {
   async getFile(id: string, fields: string): Promise<DriveFile> {
     const res = await this.call(`${DRIVE}/files/${encodeURIComponent(id)}?fields=${encodeURIComponent(fields)}`);
     return (await res.json()) as DriveFile;
+  }
+
+  async rename(id: string, name: string): Promise<void> {
+    await this.call(`${DRIVE}/files/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
   }
 
   async trash(id: string): Promise<void> {
