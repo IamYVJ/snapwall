@@ -13,6 +13,8 @@ export interface Env {
   ALLOWED_ORIGINS: string;
   /** Where the web app lives, with trailing slash, e.g. https://you.github.io/snapwall/ */
   WEB_BASE_URL: string;
+  /** Optional. The file name Google Search Console gives for verifying this domain, e.g. google1a2b3c4d.html */
+  GOOGLE_SITE_VERIFICATION?: string;
 }
 
 export type AppEnv = { Bindings: Env };

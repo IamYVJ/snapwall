@@ -10,6 +10,7 @@ WEB_BASE_URL = "https://iamyvj.github.io/snapwall/"
 
 # Secrets (set with `npx wrangler secret put <NAME>`):
 #   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TOKEN_KEY, SIGNING_KEY
+#   GOOGLE_SITE_VERIFICATION (optional): the Search Console file name, e.g. google1a2b3c4d.html
 
 [[d1_databases]]
 binding = "DB"

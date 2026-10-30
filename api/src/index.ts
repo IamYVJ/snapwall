@@ -33,6 +33,13 @@ app.route('/events', events);
 app.route('/g', guest);
 app.route('/m', media);
 
+// Search Console's file check that this domain is ours, which Google asks for before the sign-in screen can go public.
+app.get('/:file{google[\\w-]+\\.html}', (c) => {
+  const file = c.req.param('file');
+  if (file !== c.env.GOOGLE_SITE_VERIFICATION?.trim()) return c.notFound();
+  return c.body(`google-site-verification: ${file}`, 200, { 'Content-Type': 'text/html; charset=utf-8' });
+});
+
 app.notFound((c) => c.json({ error: 'not_found' }, 404));
 app.onError((err, c) => {
   if (err instanceof HttpError) {
