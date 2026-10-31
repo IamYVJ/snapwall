@@ -47,6 +47,7 @@ export const install = {
   },
   /** True inside the installed app. */
   standalone,
+  ios,
   /**
    * True once the person on iOS has been shown how to add SnapWall. Links on iOS always open in Safari, and an event
    * opened there isn't in the app's storage, so these pages offer to carry the link over by copy and paste.

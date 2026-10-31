@@ -1,18 +1,20 @@
 <script lang="ts">
-  import { formatDate } from '../lib/format';
+  import { formatDate, saveBlob } from '../lib/format';
+  import { install } from '../lib/install.svelte';
   import Icon from './Icon.svelte';
   import QR from './QR.svelte';
 
   let { open = $bindable(false), name, date, url }: { open?: boolean; name: string; date: string | null; url: string } = $props();
 
   // Photo sizes are the standard R prints (4R = 4×6 in, 5R = 5×7 in, 6R = 6×8 in), for photo labs and table frames.
+  // px is the width at 300 dpi, what print shops ask for, for the image download.
   const SIZES = {
-    a4: { label: 'A4', group: 'paper', page: 'A4 portrait', ratio: '210 / 297' },
-    a5: { label: 'A5', group: 'paper', page: 'A5 portrait', ratio: '148 / 210' },
-    letter: { label: 'Letter', group: 'paper', page: 'letter portrait', ratio: '8.5 / 11' },
-    r4: { label: '4R', group: 'photo', page: '4in 6in', ratio: '4 / 6' },
-    r5: { label: '5R', group: 'photo', page: '5in 7in', ratio: '5 / 7' },
-    r6: { label: '6R', group: 'photo', page: '6in 8in', ratio: '6 / 8' },
+    a4: { label: 'A4', group: 'paper', page: 'A4 portrait', ratio: '210 / 297', px: 2480 },
+    a5: { label: 'A5', group: 'paper', page: 'A5 portrait', ratio: '148 / 210', px: 1748 },
+    letter: { label: 'Letter', group: 'paper', page: 'letter portrait', ratio: '8.5 / 11', px: 2550 },
+    r4: { label: '4R', group: 'photo', page: '4in 6in', ratio: '4 / 6', px: 1200 },
+    r5: { label: '5R', group: 'photo', page: '5in 7in', ratio: '5 / 7', px: 1500 },
+    r6: { label: '6R', group: 'photo', page: '6in 8in', ratio: '6 / 8', px: 1800 },
   } as const;
   type Size = keyof typeof SIZES;
   const GROUPS = [
@@ -34,6 +36,47 @@
     document.body.classList.toggle('printing-poster', open);
     return () => document.body.classList.remove('printing-poster');
   });
+
+  let poster = $state<HTMLElement>();
+  let saving = $state(false);
+  let saveFailed = $state(false);
+
+  /** Saves the poster as a PNG at 300 dpi for the chosen size. */
+  async function saveImage() {
+    if (!poster || saving) return;
+    saving = true;
+    saveFailed = false;
+    try {
+      // Loaded on demand: only hosts making a poster need it.
+      const { createContext, destroyContext, domToBlob } = await import('modern-screenshot');
+      await document.fonts.ready;
+      const context = await createContext(poster, { scale: SIZES[size].px / poster.getBoundingClientRect().width, style: { boxShadow: 'none' } });
+      // Marks the print size in the file, so it opens at A4 (or 4×6 in) rather than as a huge screen image.
+      context.dpi = 300;
+      const blob = await domToBlob(context);
+      destroyContext(context);
+      const filename = `${name} poster ${SIZES[size].label}.png`.replace(/[\\/:*?"<>|]/g, '_');
+      await saveFile(blob, filename);
+    } catch {
+      saveFailed = true;
+    } finally {
+      saving = false;
+    }
+  }
+
+  // On iPhone the share sheet offers Save Image, which puts it in Photos; a download only reaches Files.
+  async function saveFile(blob: Blob, filename: string) {
+    const file = new File([blob], filename, { type: 'image/png' });
+    if (install.ios && navigator.canShare?.({ files: [file] })) {
+      try {
+        return await navigator.share({ files: [file] });
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') return;
+        // The tap may have expired while the image was made; fall back to a download.
+      }
+    }
+    saveBlob(blob, filename);
+  }
 
   /** Moves the overlay to <body> so printing can hide everything else without blank extra pages. */
   function portal(node: HTMLElement) {
@@ -57,7 +100,7 @@
     </div>
 
     <div class="stage">
-      <article class="poster" class:dark={theme === 'dark'} style="aspect-ratio: {SIZES[size].ratio}">
+      <article class="poster" bind:this={poster} class:dark={theme === 'dark'} style="aspect-ratio: {SIZES[size].ratio}">
         <div class="inner">
           <p class="kicker">{headline || 'Share your photos'}</p>
           <h1 class="name" style="--name: {nameSize}">{name}</h1>
@@ -111,9 +154,16 @@
         <input class="input" bind:value={note} maxlength="80" placeholder="e.g. Use the hashtag #MayaAndArjun" />
       </label>
 
-      <button class="btn lg" onclick={() => window.print()}>Print or save as PDF</button>
+      <div class="exports">
+        <button class="btn lg" onclick={() => window.print()}>Print or save as PDF</button>
+        <button class="btn lg ghost" onclick={saveImage} disabled={saving}>
+          <Icon name="download" size={18} />
+          {saving ? 'Making image…' : 'Save as image'}
+        </button>
+      </div>
+      {#if saveFailed}<p class="small error-text" role="alert" style="margin: 0">The image couldn’t be made. Try again, or save as PDF.</p>{/if}
       <p class="muted small" style="margin: 0">
-        Turn off “Headers and footers” in the print dialog and keep scale at 100%. Choose “Save as PDF” to get a file for a print shop.
+        When printing, turn off “Headers and footers” and keep scale at 100%. The image is a 300 dpi PNG at {SIZES[size].label} size, ready for a photo lab or to share.
       </p>
     </aside>
 
@@ -165,6 +215,12 @@
       overflow: auto;
       padding: 18px 28px 28px;
     }
+  }
+  /* Both buttons as wide as the wider one. */
+  .exports {
+    display: grid;
+    grid-template-columns: max-content;
+    gap: 10px;
   }
   .close {
     width: 40px;
