@@ -50,12 +50,35 @@
 
 {#if open}
   <div class="overlay poster-overlay" use:portal role="dialog" aria-modal="true" aria-label="Printable poster">
+    <div class="bar row">
+      <h2 class="h2">Poster</h2>
+      <span class="spacer"></span>
+      <button class="close" onclick={() => (open = false)} aria-label="Close"><Icon name="close" /></button>
+    </div>
+
+    <div class="stage">
+      <article class="poster" class:dark={theme === 'dark'} style="aspect-ratio: {SIZES[size].ratio}">
+        <div class="inner">
+          <p class="kicker">{headline || 'Share your photos'}</p>
+          <h1 class="name" style="--name: {nameSize}">{name}</h1>
+          {#if date}<p class="date">{formatDate(date)}</p>{/if}
+
+          <div class="code"><QR value={url} label="Scan to add photos" /></div>
+
+          <ol class="steps">
+            <li><span>1</span>Point your phone camera at the code</li>
+            <li><span>2</span>Add your photos and videos</li>
+            <li><span>3</span>No app or account needed</li>
+          </ol>
+
+          {#if note}<p class="note">{note}</p>{/if}
+
+          <p class="foot">Photos go straight to the host’s Google Drive · Snap<em>Wall</em></p>
+        </div>
+      </article>
+    </div>
+
     <aside class="panel stack" style="--gap: 18px">
-      <div class="row">
-        <h2 class="h2">Poster</h2>
-        <span class="spacer"></span>
-        <button class="close" onclick={() => (open = false)} aria-label="Close"><Icon name="close" /></button>
-      </div>
 
       {#each GROUPS as g (g.id)}
         <div class="field">
@@ -94,57 +117,53 @@
       </p>
     </aside>
 
-    <div class="stage">
-      <article class="poster" class:dark={theme === 'dark'} style="aspect-ratio: {SIZES[size].ratio}">
-        <div class="inner">
-          <p class="kicker">{headline || 'Share your photos'}</p>
-          <h1 class="name" style="--name: {nameSize}">{name}</h1>
-          {#if date}<p class="date">{formatDate(date)}</p>{/if}
-
-          <div class="code"><QR value={url} label="Scan to add photos" /></div>
-
-          <ol class="steps">
-            <li><span>1</span>Point your phone camera at the code</li>
-            <li><span>2</span>Add your photos and videos</li>
-            <li><span>3</span>No app or account needed</li>
-          </ol>
-
-          {#if note}<p class="note">{note}</p>{/if}
-
-          <p class="foot">Photos go straight to the host’s Google Drive · Snap<em>Wall</em></p>
-        </div>
-      </article>
-    </div>
   </div>
 {/if}
 
 <style>
+  /* Phones: the poster first, then its options, all in one scroll. Wider screens: options on the left. */
   .overlay {
     position: fixed;
     inset: 0;
     z-index: 70;
     background: var(--bg);
     display: grid;
-    grid-template-columns: 1fr;
+    grid-template: 'bar' auto 'stage' auto 'panel' auto / 1fr;
+    align-content: start;
     overflow: auto;
     animation: rise 0.25s ease both;
   }
   @media (min-width: 900px) {
     .overlay {
-      grid-template-columns: 340px 1fr;
+      grid-template: 'bar stage' auto 'panel stage' 1fr / 340px 1fr;
+      align-content: stretch;
       overflow: hidden;
     }
   }
-  .panel {
-    padding: 24px var(--gutter);
+  .bar {
+    grid-area: bar;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bg);
+    padding: 16px var(--gutter);
     border-bottom: 1px solid var(--line);
   }
+  .panel {
+    grid-area: panel;
+    padding: 24px var(--gutter) 48px;
+  }
   @media (min-width: 900px) {
-    .panel {
+    .bar {
+      position: static;
+      padding: 28px 28px 0;
       border-bottom: 0;
       border-right: 1px solid var(--line);
+    }
+    .panel {
+      border-right: 1px solid var(--line);
       overflow: auto;
-      padding: 28px;
+      padding: 18px 28px 28px;
     }
   }
   .close {
@@ -178,12 +197,18 @@
     color: var(--bg);
   }
   .stage {
+    grid-area: stage;
     display: grid;
     place-items: center;
-    padding: 24px var(--gutter) 48px;
+    padding: 24px var(--gutter);
     background: var(--shade);
-    min-height: 0;
-    overflow: auto;
+  }
+  @media (min-width: 900px) {
+    .stage {
+      padding-bottom: 48px;
+      min-height: 0;
+      overflow: auto;
+    }
   }
 
   /* The poster has its own light/dark theme, independent of the site's. Everything is sized in --u,
@@ -308,6 +333,7 @@
       background: #fff;
       animation: none;
     }
+    .bar,
     .panel {
       display: none;
     }
