@@ -197,24 +197,32 @@
     }
   }
 
-  async function loadMore() {
-    if (!next || loadingMore) return;
-    loadingMore = true;
-    try {
-      const want = by;
-      const page = await api.media(next, want);
-      if (by !== want) return;
-      items = [...items, ...page.items.filter((i) => !items.some((x) => x.id === i.id))];
-      next = page.next;
-    } finally {
-      loadingMore = false;
-    }
+  let more: Promise<void> | null = null;
+
+  /** The next page of the wall. Asked again while one is on its way, it waits for that one. */
+  function loadMore(): Promise<void> {
+    if (!next) return Promise.resolve();
+    more ??= (async () => {
+      loadingMore = true;
+      try {
+        const want = by;
+        const page = await api.media(next, want);
+        if (by !== want) return;
+        items = [...items, ...page.items.filter((i) => !items.some((x) => x.id === i.id))];
+        next = page.next;
+      } finally {
+        loadingMore = false;
+        more = null;
+      }
+    })();
+    return more;
   }
 
   async function showGuest(name: string | null) {
     by = name;
     items = [];
     next = null;
+    selected = new Set();
     try {
       const page = await api.media(null, name);
       if (by !== name) return;
@@ -451,6 +459,29 @@
     if (s.has(id)) s.delete(id);
     else s.add(id);
     selected = s;
+  }
+
+  /** Select all is offered for one guest's photos or Find me's: a set worth taking whole, unlike the entire wall. */
+  const narrowed = $derived(!!matches || !!by);
+  const allSelected = $derived(!next && shown.some((i) => i.download) && shown.every((i) => !i.download || selected.has(i.id)));
+  let gathering = $state(false);
+
+  async function selectAll() {
+    if (allSelected) {
+      selected = new Set();
+      return;
+    }
+    const want = by;
+    gathering = true;
+    try {
+      // A guest's photos come a page at a time, so the rest load first.
+      while (!matches && next && by === want) await loadMore();
+    } catch {
+      /* selects what has loaded */
+    } finally {
+      gathering = false;
+    }
+    if (by === want) selected = new Set(shown.filter((i) => i.download).map((i) => i.id));
   }
 
   async function downloadSelected() {
@@ -712,9 +743,17 @@
   {/if}
 
   <!-- Action bar -->
-  <nav class="dock" aria-label="Actions">
+  <nav class="dock" class:tight={selecting && narrowed} aria-label="Actions">
     {#if selecting}
-      <button class="btn ghost" onclick={() => ((selecting = false), (selected = new Set()))}>Cancel</button>
+      <button class="btn ghost" class:round={narrowed} aria-label="Cancel" onclick={() => ((selecting = false), (selected = new Set()))}>
+        {#if narrowed}<Icon name="close" size={18} />{:else}Cancel{/if}
+      </button>
+      {#if narrowed}
+        <button class="btn ghost" disabled={gathering || zipping} onclick={selectAll}>
+          {#if gathering}<span class="spinner" style="width:16px;height:16px"></span>{/if}
+          {allSelected ? 'Clear' : 'Select all'}
+        </button>
+      {/if}
       <button class="btn" disabled={!selected.size || zipping} onclick={downloadSelected}>
         {#if zipping}<span class="spinner" style="width:16px;height:16px"></span> Preparing…{:else}<Icon name="download" size={18} /> Download {selected.size || ''}{/if}
       </button>
@@ -843,6 +882,15 @@
   }
   .dock .btn.ghost {
     background: var(--surface);
+  }
+  /* Three buttons while selecting, still on one line on a phone. */
+  .dock.tight .btn {
+    padding: 0 12px;
+  }
+  .dock .btn.round {
+    width: 44px;
+    padding: 0;
+    flex-shrink: 0;
   }
 
   .sheet {
