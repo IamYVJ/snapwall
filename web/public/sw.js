@@ -20,8 +20,9 @@ self.addEventListener('fetch', (event) => {
 
   if (req.mode === 'navigate') {
     // Network first, so a new deploy shows up on the next open; the cached page is only for when offline.
+    // GitHub Pages lets browsers keep the page for 10 minutes, so it's checked with the server every time.
     event.respondWith(
-      fetch(req)
+      fetch(req, { cache: 'no-cache' })
         .then((res) => {
           // Only the app itself is the shell; privacy.html is a separate page.
           if (res.ok && url.pathname.endsWith('/')) {

@@ -141,3 +141,34 @@ test('other refusals fail without retrying', async () => {
   expect(canRetry(new ApiError(403, 'guest_limit', ''))).toBe(false);
   expect(canRetry(new TypeError('network'))).toBe(true);
 });
+
+test('a retry with the kept state carries on in the same Drive session', async () => {
+  const api = fakeApi();
+  const state = {};
+  replies = Array.from({ length: 12 }, () => ({ status: 0 }));
+  const first = uploadFile(api, file, { uploader: null, stripLocation: false }, () => undefined, state).catch((e: unknown) => e);
+  await vi.runAllTimersAsync();
+  expect(((await first) as ApiError).code).toBe('upload_failed');
+
+  puts = [];
+  replies = [
+    { status: 308, range: 'bytes=0-699' },
+    { status: 200, body: { id: 'drive-file' } },
+  ];
+  const second = uploadFile(api, file, { uploader: null, stripLocation: false }, () => undefined, state);
+  await vi.runAllTimersAsync();
+  expect(await second).toBe(ITEM);
+  expect(api.startUpload).toHaveBeenCalledTimes(1);
+  expect(puts.map((p) => p.headers['Content-Range'] ?? null)).toEqual(['bytes */1000', 'bytes 700-999/1000']);
+});
+
+test('a kept session that ran out starts a new one', async () => {
+  const api = fakeApi();
+  const state = { slot: { uploadId: 'old', uploadUrl: 'https://www.googleapis.com/upload/old' } };
+  replies = [{ status: 404 }, { status: 200, body: { id: 'drive-file' } }];
+  const p = uploadFile(api, file, { uploader: null, stripLocation: false }, () => undefined, state);
+  await vi.runAllTimersAsync();
+  expect(await p).toBe(ITEM);
+  expect(api.startUpload).toHaveBeenCalledTimes(1);
+  expect(api.completeUpload).toHaveBeenLastCalledWith('u1', 'drive-file');
+});

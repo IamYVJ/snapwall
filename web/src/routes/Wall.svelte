@@ -13,7 +13,8 @@
   import { formatDate, plural, sizeLabel } from '../lib/format';
   import { saved } from '../lib/saved.svelte';
   import { href } from '../lib/router.svelte';
-  import { canRetry, mimeOf, uploadFile } from '../lib/upload';
+  import { hold } from '../lib/activity';
+  import { canRetry, mimeOf, retriesItself, uploadFile, type UploadState } from '../lib/upload';
   import { zipMedia } from '../lib/zip';
 
   let { token }: { token: string } = $props();
@@ -21,18 +22,29 @@
   interface Job {
     key: number;
     file: File;
-    status: 'waiting' | 'uploading' | 'done' | 'error';
+    /** reconnecting: lost the connection, and tries again when it's back or the guest returns to the page. */
+    status: 'waiting' | 'uploading' | 'reconnecting' | 'done' | 'error';
     progress: number;
     /** Drive is busy and the upload will try again by itself. */
     paused?: boolean;
     error?: string;
     canRetry?: boolean;
+    /** Times it went back to reconnecting, so a file that never gets through ends up with a Retry button. */
+    reconnects: number;
     /** The upload once it's on the wall, so the guest can still delete it for a while. */
     item?: MediaItem;
     deleted?: boolean;
     /** An exact copy of a file already in the event, so the server skipped it. */
     duplicate?: boolean;
+    /** The same file was picked again on this page, so it isn't sent twice. */
+    repeat?: boolean;
   }
+
+  /** Files sent at once. More helps lots of small photos; the phone's upload speed is shared between them anyway. */
+  const PARALLEL = 3;
+  const MAX_RECONNECTS = 5;
+  const RECONNECT_MS = 15_000;
+  const sameFile = (a: File, b: File) => a.name === b.name && a.size === b.size && a.lastModified === b.lastModified;
 
   const pinKey = `snapwall.pin.${token}`;
   const nameKey = 'snapwall.name';
@@ -77,6 +89,9 @@
   let sentHere = $state(0);
   let jobKey = 0;
   let active = 0;
+  /** Each unfinished upload's progress, kept out of the reactive jobs so a retry can carry on from it. */
+  const progressOf = new Map<number, UploadState>();
+  let showDone = $state(false);
 
   let uploader = $state(safeGet(() => localStorage, nameKey) ?? '');
   let askName = $state(false);
@@ -98,7 +113,7 @@
   // Per-guest limits: what the server counted at load, plus everything queued or sent from this page since.
   const limits = $derived.by(() => {
     if (!event?.usage) return null;
-    const mine = jobs.filter((j) => j.status !== 'error');
+    const mine = jobs.filter((j) => j.status !== 'error' && !j.duplicate && !j.repeat);
     return {
       files: event.settings.guestMaxFiles === null ? null : event.settings.guestMaxFiles - event.usage.files - mine.length,
       bytes:
@@ -110,9 +125,24 @@
   const atLimit = $derived(!!limits && ((limits.files !== null && limits.files <= 0) || (limits.bytes !== null && limits.bytes <= 0)));
 
   const accept = $derived(event?.settings.allowVideo ? 'image/*,video/*' : 'image/*');
-  const busyCount = $derived(jobs.filter((j) => j.status === 'waiting' || j.status === 'uploading').length);
+  const busy = (j: Job) => j.status === 'waiting' || j.status === 'uploading' || j.status === 'reconnecting';
+  const busyCount = $derived(jobs.filter(busy).length);
   const failedCount = $derived(jobs.filter((j) => j.status === 'error').length);
-  const overall = $derived(jobs.length ? jobs.reduce((s, j) => s + (j.status === 'done' ? 1 : j.progress), 0) / jobs.length : 0);
+  const retryable = $derived(jobs.filter((j) => j.status === 'error' && j.canRetry));
+  const doneCount = $derived(jobs.length - busyCount - failedCount);
+  // Weighted by size, so one long video doesn't count the same as a photo. Files that won't be sent are left out.
+  const counted = $derived(jobs.filter((j) => j.status !== 'error' && !j.repeat));
+  const totalBytes = $derived(counted.reduce((s, j) => s + j.file.size, 0));
+  const sentBytes = $derived(counted.reduce((s, j) => s + j.file.size * (j.status === 'done' ? 1 : j.progress), 0));
+  const overall = $derived(totalBytes ? sentBytes / totalBytes : 0);
+  // While a long list is going, finished files fold away so the ones still sending stay in view.
+  const listed = $derived(busyCount && !showDone ? jobs.filter((j) => j.status !== 'done') : jobs);
+
+  // Keeps the screen on and asks before leaving while anything is sending.
+  const uploading = $derived(busyCount > 0);
+  $effect(() => {
+    if (uploading) return hold();
+  });
 
   async function load() {
     try {
@@ -256,9 +286,17 @@
     const allowed = s.allowVideo ? [...IMAGE_TYPES, ...VIDEO_TYPES] : IMAGE_TYPES;
     for (const file of pendingFiles) {
       const mime = mimeOf(file);
-      const job: Job = { key: ++jobKey, file, status: 'waiting', progress: 0 };
+      const job: Job = { key: ++jobKey, file, status: 'waiting', progress: 0, reconnects: 0 };
       const left = limits;
-      if (left?.files !== null && left?.files !== undefined && left.files <= 0) {
+      const before = jobs.find((j) => !j.deleted && sameFile(j.file, file));
+      if (before?.status === 'error' && before.canRetry) {
+        retry(before);
+        continue;
+      }
+      if (before && before.status !== 'error') {
+        job.status = 'done';
+        job.repeat = true;
+      } else if (left?.files !== null && left?.files !== undefined && left.files <= 0) {
         job.status = 'error';
         job.error = `Over the limit of ${s.guestMaxFiles} files`;
       } else if (left?.bytes !== null && left?.bytes !== undefined && file.size > left.bytes) {
@@ -279,7 +317,7 @@
   }
 
   function pump() {
-    while (active < 2) {
+    while (active < PARALLEL) {
       const job = jobs.find((j) => j.status === 'waiting');
       if (!job) return;
       active++;
@@ -290,16 +328,27 @@
     }
   }
 
+  /** Sends the uploads that lost their connection again, once there is one and the guest is on the page. */
+  function reconnect() {
+    if (document.visibilityState !== 'visible' || !navigator.onLine) return;
+    for (const j of jobs) if (j.status === 'reconnecting') j.status = 'waiting';
+    pump();
+  }
+
   async function run(job: Job) {
     if (!event) return;
     job.status = 'uploading';
+    const state = progressOf.get(job.key) ?? {};
+    progressOf.set(job.key, state);
     try {
       const item = await uploadFile(
         api,
         job.file,
         { uploader: uploader.trim() || null, stripLocation: event.settings.stripLocation, onWait: (w) => (job.paused = w) },
         (p) => (job.progress = p),
+        state,
       );
+      progressOf.delete(job.key);
       job.status = 'done';
       job.progress = 1;
       job.item = item;
@@ -310,6 +359,13 @@
       }
     } catch (err) {
       job.paused = false;
+      if (retriesItself(err) && job.reconnects < MAX_RECONNECTS) {
+        job.reconnects++;
+        job.status = 'reconnecting';
+        setTimeout(reconnect, RECONNECT_MS);
+        return;
+      }
+      progressOf.delete(job.key);
       if (err instanceof ApiError && err.code === 'duplicate') {
         job.status = 'done';
         job.progress = 1;
@@ -327,7 +383,7 @@
       // Nothing else can be saved either, so don't make every queued file fail one by one.
       if (err instanceof ApiError && err.code === 'storage_full') {
         for (const j of jobs) {
-          if (j.status !== 'waiting') continue;
+          if (j.status !== 'waiting' && j.status !== 'reconnecting') continue;
           j.status = 'error';
           j.error = 'Not sent: the host’s Drive is full';
           j.canRetry = true;
@@ -361,14 +417,19 @@
 
   function retry(job: Job) {
     job.status = 'waiting';
-    job.progress = 0;
     job.error = undefined;
     job.canRetry = false;
+    job.reconnects = 0;
     pump();
   }
 
+  function retryAll() {
+    for (const j of retryable) retry(j);
+  }
+
   function clearFinished() {
-    jobs = jobs.filter((j) => j.status === 'waiting' || j.status === 'uploading');
+    jobs = jobs.filter(busy);
+    showDone = false;
     if (!jobs.length) sheetOpen = false;
   }
 
@@ -410,8 +471,16 @@
     return () => io.disconnect();
   });
 
-  onMount(load);
-  onDestroy(() => clearInterval(poll));
+  onMount(() => {
+    load();
+    addEventListener('online', reconnect);
+    document.addEventListener('visibilitychange', reconnect);
+  });
+  onDestroy(() => {
+    clearInterval(poll);
+    removeEventListener('online', reconnect);
+    document.removeEventListener('visibilitychange', reconnect);
+  });
 
   const errors: Record<string, [string, string]> = {
     event_not_found: ['This link isn’t valid', 'It may have been replaced by the host. Ask them for the latest link or QR code.'],
@@ -578,16 +647,30 @@
               : 'Uploads finished'}
         </strong>
         <span class="spacer"></span>
+        {#if retryable.length > 1}<button class="link" onclick={retryAll}>Retry all</button>{/if}
         {#if !busyCount}<button class="link" onclick={clearFinished}>Clear</button>{/if}
         <button class="link" onclick={() => (sheetOpen = false)}>Hide</button>
       </div>
       <div class="bar"><span style="width: {overall * 100}%"></span></div>
+      {#if busyCount}
+        <p class="hint small muted">
+          {sizeLabel(Math.ceil((totalBytes - sentBytes) / 1024 / 1024))} to go. Keep SnapWall open until it’s done. If you leave, uploads pause and
+          carry on when you’re back.
+        </p>
+      {/if}
       <ul class="jobs">
-        {#each jobs as job (job.key)}
+        {#if busyCount && doneCount}
+          <li class="job">
+            <button class="link small" onclick={() => (showDone = !showDone)}>{showDone ? 'Hide' : 'Show'} {doneCount} done</button>
+          </li>
+        {/if}
+        {#each listed as job (job.key)}
           <li class="job">
             <span class="jname">{job.file.name}</span>
             {#if job.deleted}
               <span class="muted small">Deleted</span>
+            {:else if job.repeat}
+              <span class="muted small">Already added</span>
             {:else if job.duplicate}
               <span class="muted small">Already uploaded</span>
             {:else if job.status === 'done'}
@@ -596,8 +679,12 @@
             {:else if job.status === 'error'}
               <span class="error-text small">{job.error}</span>
               {#if job.canRetry}<button class="link" onclick={() => retry(job)}>Retry</button>{/if}
+            {:else if job.status === 'reconnecting'}
+              <span class="muted small">Reconnecting…</span>
             {:else if job.paused}
               <span class="muted small">Drive is busy, retrying…</span>
+            {:else if job.status === 'waiting'}
+              <span class="muted small">{job.progress ? `${Math.round(job.progress * 100)}%` : 'Waiting'}</span>
             {:else}
               <span class="muted small">{Math.round(job.progress * 100)}%</span>
             {/if}
@@ -748,8 +835,8 @@
     bottom: calc(max(20px, env(safe-area-inset-bottom)) + 84px);
     width: min(440px, calc(100vw - 24px));
     max-height: 46vh;
-    display: grid;
-    grid-template-rows: auto auto 1fr;
+    display: flex;
+    flex-direction: column;
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: 18px;
@@ -772,10 +859,16 @@
     background: var(--accent);
     transition: width 0.3s ease;
   }
+  .hint {
+    margin: 0;
+    padding: 8px 18px 0;
+  }
   .jobs {
     list-style: none;
     margin: 0;
     padding: 6px 18px 14px;
+    flex: 1;
+    min-height: 0;
     overflow: auto;
   }
   .job {

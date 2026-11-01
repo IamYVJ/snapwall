@@ -79,11 +79,23 @@ ${css.map((f) => `    <link rel="stylesheet" href="${f}" />`).join('\n')}
   };
 }
 
+/** Writes version.json, which an open page checks to see whether a newer build is live (see lib/update.ts). */
+function version(build: string): Plugin {
+  return {
+    name: 'snapwall-version',
+    apply: 'build',
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify({ build }) });
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), 'VITE_');
   const api = env.VITE_API_URL || 'http://localhost:8787';
   // GitHub Pages serves project sites from /<repo>/
   const base = env.VITE_BASE || '/snapwall/';
+  const build = Date.now().toString(36);
   return {
     base,
     plugins: [
@@ -94,8 +106,13 @@ export default defineConfig(({ mode }) => {
       },
       faceModels(base),
       staticPrivacy(),
+      version(build),
     ],
-    define: { __API_URL__: JSON.stringify(api.replace(/\/$/, '')), __FACE_MODELS__: JSON.stringify(base + FACE_MODEL_DIR) },
+    define: {
+      __API_URL__: JSON.stringify(api.replace(/\/$/, '')),
+      __FACE_MODELS__: JSON.stringify(base + FACE_MODEL_DIR),
+      __BUILD_ID__: JSON.stringify(build),
+    },
     // The face library (with TensorFlow.js) is one large chunk, loaded only when a guest uses Find me.
     build: { chunkSizeWarningLimit: 1500 },
   };
