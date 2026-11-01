@@ -124,15 +124,18 @@
     background: rgba(255, 255, 255, 0.16);
   }
   .stage {
+    position: relative;
     min-height: 0;
-    display: grid;
-    place-items: center;
-    padding: 0 0 max(16px, env(safe-area-inset-bottom));
   }
+  /* Pinned to the stage's edges and centred by margin: auto, so max-height has a fixed height to go by. In a grid
+     cell it had none, and tall photos ran off the screen. */
   .stage img,
   .stage video {
+    position: absolute;
+    inset: 0 0 max(16px, env(safe-area-inset-bottom));
+    margin: auto;
     max-width: 100%;
-    max-height: 100%;
+    max-height: calc(100% - max(16px, env(safe-area-inset-bottom)));
     object-fit: contain;
     animation: fade 0.25s ease both;
   }
