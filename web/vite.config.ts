@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { createServer, defineConfig, loadEnv, type Plugin } from 'vite';
@@ -13,6 +13,8 @@ const FACE_MODELS = ['ssd_mobilenetv1_model', 'face_landmark_68_model', 'face_re
   `${m}-weights_manifest.json`,
   `${m}.bin`,
 ]);
+/** Their total size, so Find me can show how much of the download is done. */
+const FACE_MODEL_BYTES = FACE_MODELS.reduce((sum, file) => sum + statSync(join(faceApiDir, 'model', file)).size, 0);
 // Under assets/ with the version in the path, so the service worker can keep them like any other built asset.
 const FACE_MODEL_DIR = `assets/face-models-${faceApiVersion}/`;
 
@@ -111,6 +113,7 @@ export default defineConfig(({ mode }) => {
     define: {
       __API_URL__: JSON.stringify(api.replace(/\/$/, '')),
       __FACE_MODELS__: JSON.stringify(base + FACE_MODEL_DIR),
+      __FACE_MODEL_BYTES__: JSON.stringify(FACE_MODEL_BYTES),
       __BUILD_ID__: JSON.stringify(build),
     },
     // The face library (with TensorFlow.js) is one large chunk, loaded only when a guest uses Find me.

@@ -5,3 +5,5 @@ declare const __API_URL__: string;
 declare const __BUILD_ID__: string;
 /** Where the face models for Find me are served, under the site's base path. */
 declare const __FACE_MODELS__: string;
+/** The face models' total size in bytes. */
+declare const __FACE_MODEL_BYTES__: number;

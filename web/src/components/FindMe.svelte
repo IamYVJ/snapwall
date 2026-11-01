@@ -25,6 +25,8 @@
   let message = $state('');
   let done = $state(0);
   let total = $state(0);
+  /** How much of the face model has downloaded (0 to 1), while getting ready. */
+  let ready = $state(0);
   /** True once matches are on the wall and the sheet has closed, with the scan still going. */
   let behind = $state(false);
   let camera: HTMLInputElement;
@@ -45,10 +47,12 @@
     abort = new AbortController();
     const signal = abort.signal;
     phase = 'loading';
+    ready = 0;
     try {
-      await loadFaceModel().catch(() => {
+      await loadFaceModel((f) => (ready = f)).catch(() => {
         throw new FaceError('model_failed');
       });
+      ready = 1;
       const me = await selfieFace(file);
       const photos = (await list()).filter((i) => i.mime.startsWith('image/'));
       if (signal.aborted) return;
@@ -143,12 +147,14 @@
     <div class="stack" style="--gap: 10px" aria-live="polite">
       <p class="muted" style="margin: 0">
         {#if phase === 'loading'}
-          Getting ready…
+          {ready < 1
+            ? `Getting ready… ${Math.round((ready * __FACE_MODEL_BYTES__) / 1e6)} of ${Math.round(__FACE_MODEL_BYTES__ / 1e6)} MB`
+            : 'Finding your face…'}
         {:else}
           Looking through {done.toLocaleString()} of {plural(total, 'photo')}…
         {/if}
       </p>
-      <div class="bar"><span style="width: {phase === 'scanning' && total ? (done / total) * 100 : 0}%"></span></div>
+      <div class="bar"><span style="width: {(phase === 'loading' ? ready : total ? done / total : 0) * 100}%"></span></div>
     </div>
     <div><button class="btn ghost" onclick={stop}>Stop</button></div>
   {:else}
