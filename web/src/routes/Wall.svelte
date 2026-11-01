@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { flushSync, onDestroy, onMount } from 'svelte';
   import type { GuestCount, MediaItem, PublicEvent } from '../../../shared/types';
   import { IMAGE_TYPES, VIDEO_TYPES } from '../../../shared/types';
   import AppButton from '../components/AppButton.svelte';
@@ -12,6 +12,7 @@
   import { ApiError, guestApi } from '../lib/api';
   import { formatDate, plural, sizeLabel } from '../lib/format';
   import { saved } from '../lib/saved.svelte';
+  import { install } from '../lib/install.svelte';
   import { href } from '../lib/router.svelte';
   import { hold } from '../lib/activity';
   import { canRetry, mimeOf, retriesItself, uploadFile, type UploadState } from '../lib/upload';
@@ -255,7 +256,16 @@
     await load();
   }
 
+  const needsName = () =>
+    !!event && ((event.settings.requireName && !uploader.trim()) || (!uploader && !safeGet(() => localStorage, `${nameKey}.asked`)));
+
+  // The name is asked before the picker opens: an iPhone can take a while to get a big pick ready, and a question
+  // after that wait feels like one more hold-up.
   function pick() {
+    if (needsName()) {
+      askName = true;
+      return;
+    }
     fileInput.value = '';
     fileInput.click();
   }
@@ -263,12 +273,8 @@
   function onFiles(files: FileList | null) {
     if (!files?.length || !event) return;
     pendingFiles = [...files];
-    const seen = safeGet(() => localStorage, `${nameKey}.asked`);
-    if ((event.settings.requireName && !uploader.trim()) || (!uploader && !seen)) {
-      askName = true;
-    } else {
-      enqueue();
-    }
+    if (needsName()) askName = true;
+    else enqueue();
   }
 
   function confirmName(skip = false) {
@@ -276,8 +282,11 @@
     if (skip) uploader = '';
     safeSet(() => localStorage, nameKey, uploader.trim());
     safeSet(() => localStorage, `${nameKey}.asked`, '1');
-    askName = false;
-    enqueue();
+    // Closes the dialog now, since the page behind it can't open the picker while it's showing. Tapping Continue
+    // counts as the tap the picker needs.
+    flushSync(() => (askName = false));
+    if (pendingFiles.length) enqueue();
+    else pick();
   }
 
   function enqueue() {
@@ -575,6 +584,10 @@
         {/if}
       </p>
     {/if}
+    {#if install.ios && event.settings.uploadsOpen && !atLimit && !jobs.length}
+      <!-- iOS gets every picked photo and video ready (downloading originals from iCloud, shrinking videos) before the page sees any. -->
+      <p class="notice muted small">On iPhone, add 20–30 at a time so they start sooner. You can keep adding while they upload.</p>
+    {/if}
 
     {#if event.settings.guestView}
       {#if matches}
@@ -655,7 +668,7 @@
       {#if busyCount}
         <p class="hint small muted">
           {sizeLabel(Math.ceil((totalBytes - sentBytes) / 1024 / 1024))} to go. Keep SnapWall open until it’s done. If you leave, uploads pause and
-          carry on when you’re back.
+          carry on when you’re back.{install.ios ? ' You can add more while these upload.' : ''}
         </p>
       {/if}
       <ul class="jobs">
