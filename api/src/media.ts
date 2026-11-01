@@ -129,12 +129,16 @@ media.get('/:event/:upload/:kind', async (c) => {
     throw new HttpError(403, 'bad_signature');
   }
 
+  // One trip to the database for all three, since every photo of a ZIP waits on this before Drive is asked.
   const db = c.env.DB;
-  const event = await db.prepare('SELECT * FROM events WHERE id = ?').bind(eventId).first<EventRow>();
-  const upload = await db
-    .prepare(`SELECT * FROM uploads WHERE id = ? AND event_id = ? AND status = 'done'`)
-    .bind(uploadId, eventId)
-    .first<UploadRow>();
+  const [events, uploads, owners] = await db.batch([
+    db.prepare('SELECT * FROM events WHERE id = ?').bind(eventId),
+    db.prepare(`SELECT * FROM uploads WHERE id = ? AND event_id = ? AND status = 'done'`).bind(uploadId, eventId),
+    db.prepare('SELECT * FROM owners WHERE id = (SELECT owner_id FROM events WHERE id = ?)').bind(eventId),
+  ]);
+  const event = events.results[0] as EventRow | undefined;
+  const upload = uploads.results[0] as UploadRow | undefined;
+  const owner = owners.results[0] as OwnerRow | undefined;
   if (!event || !upload?.file_id) throw new HttpError(404, 'not_found');
   if (aud === 'g') {
     // Re-check live settings so disabling the event or hiding an item takes effect immediately.
@@ -143,7 +147,6 @@ media.get('/:event/:upload/:kind', async (c) => {
     if (kind === 'dl' && !settings.guestDownload) throw new HttpError(403, 'download_disabled');
   }
 
-  const owner = await db.prepare('SELECT * FROM owners WHERE id = ?').bind(event.owner_id).first<OwnerRow>();
   if (!owner) throw new HttpError(404, 'not_found');
   const drive = await driveFor(c.env, owner);
   const isImage = upload.mime.startsWith('image/');

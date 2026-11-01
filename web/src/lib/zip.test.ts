@@ -93,6 +93,51 @@ describe('zipMedia', () => {
     expect(seen.at(-1)).toBe(2);
   });
 
+  test('downloads up to 100 MB ahead, and a bigger file on its own', async () => {
+    let open = 0;
+    let most = 0;
+    vi.stubGlobal('fetch', async (url: string) => {
+      open++;
+      most = Math.max(most, open);
+      const id = new URL(url).pathname.split('/').pop()!;
+      await new Promise((r) => setTimeout(r, 5));
+      return new Response(
+        new ReadableStream({
+          pull(ctl) {
+            ctl.enqueue(new TextEncoder().encode(id));
+            ctl.close();
+            open--;
+          },
+        }),
+      );
+    });
+    const MB = 1024 * 1024;
+    await run(['a', 'b', 'c', 'd', 'e'].map((id) => item(id, `${id}.jpg`, { size: 30 * MB })));
+    expect(most).toBe(3);
+    expect(await unzip()).toEqual({ 'a.jpg': 'a', 'b.jpg': 'b', 'c.jpg': 'c', 'd.jpg': 'd', 'e.jpg': 'e' });
+
+    saved.length = most = 0;
+    await run([item('a', 'a.jpg', { size: 10 * MB }), item('v', 'v.mp4', { size: 500 * MB }), item('b', 'b.jpg', { size: 10 * MB })]);
+    expect(most).toBe(1);
+    expect(Object.keys(await unzip())).toEqual(['a.jpg', 'v.mp4', 'b.jpg']);
+  });
+
+  test('collects separate files for the share sheet', async () => {
+    serve({ b: 500 });
+    const { collectMedia } = await import('./zip');
+    const res = await collectMedia({
+      items: [item('a', 'IMG.jpg'), item('b', 'b.jpg'), item('c', 'IMG.jpg', { mime: 'video/mp4' })],
+      signal: new AbortController().signal,
+      onProgress: () => {},
+    });
+    expect(res.failed).toBe(1);
+    expect(res.files.map((f) => [f.name, f.type])).toEqual([
+      ['IMG.jpg', 'image/jpeg'],
+      ['IMG (1).jpg', 'video/mp4'],
+    ]);
+    expect(await res.files[1].text()).toBe('c');
+  });
+
   test('stops when cancelled', async () => {
     serve();
     const ctl = new AbortController();

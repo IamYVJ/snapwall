@@ -10,13 +10,13 @@
   import MediaGrid from '../components/MediaGrid.svelte';
   import Modal from '../components/Modal.svelte';
   import { ApiError, guestApi } from '../lib/api';
-  import { formatDate, plural, sizeLabel } from '../lib/format';
+  import { formatDate, plural, saveBlob, sizeLabel } from '../lib/format';
   import { saved } from '../lib/saved.svelte';
   import { install } from '../lib/install.svelte';
   import { href } from '../lib/router.svelte';
   import { hold } from '../lib/activity';
   import { canRetry, mimeOf, retriesItself, uploadFile, type UploadState } from '../lib/upload';
-  import { zipMedia } from '../lib/zip';
+  import { collectMedia, zipFiles, zipMedia, type ZipProgress } from '../lib/zip';
 
   let { token }: { token: string } = $props();
 
@@ -105,6 +105,12 @@
   /** How much of the chosen photos has downloaded into the ZIP, 0 to 1. */
   let zipped = $state(0);
   let zipStop: AbortController | null = null;
+  /**
+   * On iPhone the chosen photos download as they are and wait here for a second tap, which opens the share sheet: it
+   * needs a fresh tap, and its Save Images puts them in Photos, where a ZIP would only reach Files.
+   */
+  let ready = $state<{ files: File[]; of: Set<string> } | null>(null);
+  const toPhotos = install.ios && !!navigator.canShare?.({ files: [new File([''], 'photo.jpg', { type: 'image/jpeg' })] });
 
   let poll: ReturnType<typeof setInterval> | undefined;
 
@@ -492,23 +498,21 @@
   async function downloadSelected() {
     const chosen = shown.filter((i) => selected.has(i.id) && i.download);
     if (!chosen.length) return;
-    if (chosen.length === 1) {
+    if (chosen.length === 1 && !toPhotos) {
       location.href = chosen[0].download!;
       return;
     }
     zipping = true;
     zipped = 0;
     zipStop = new AbortController();
+    const of = selected;
+    const onProgress = (p: ZipProgress) => (zipped = p.totalBytes ? p.bytes / p.totalBytes : 0);
     try {
-      const res = await zipMedia({
-        filename: `${event?.name ?? 'snapwall'}.zip`,
-        list: async () => chosen,
-        signal: zipStop.signal,
-        onProgress: (p) => (zipped = p.totalBytes ? p.bytes / p.totalBytes : 0),
-      });
-      if (res) {
-        selecting = false;
-        selected = new Set();
+      if (toPhotos) {
+        const { files } = await collectMedia({ items: chosen, signal: zipStop.signal, onProgress });
+        if (files.length && selected === of) ready = { files, of };
+      } else if (await zipMedia({ filename: zipName(), list: async () => chosen, signal: zipStop.signal, onProgress })) {
+        doneSelecting();
       }
     } catch (err) {
       if (!zipStop.signal.aborted) throw err;
@@ -518,15 +522,43 @@
     }
   }
 
-  function cancelSelecting() {
-    zipStop?.abort();
+  const zipName = () => `${event?.name ?? 'snapwall'}.zip`;
+
+  /** Ready only counts for the photos it was made from; choosing others asks for a new download. */
+  const saving = $derived(ready?.of === selected ? ready : null);
+  $effect(() => {
+    if (ready && ready.of !== selected) ready = null;
+  });
+
+  async function saveToPhotos() {
+    if (!saving) return;
+    const { files } = saving;
+    if (navigator.canShare?.({ files })) {
+      try {
+        await navigator.share({ files });
+        return doneSelecting();
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') return; // the sheet was closed; the button stays for another go
+      }
+    }
+    // Too many or too big for the share sheet: one ZIP instead, which goes to Files.
+    saveBlob(await zipFiles(files), zipName());
+    doneSelecting();
+  }
+
+  function doneSelecting() {
     selecting = false;
     selected = new Set();
   }
 
-  // The ZIP is put together on the phone, so locking it or leaving the page would lose the photos gathered so far.
+  function cancelSelecting() {
+    zipStop?.abort();
+    doneSelecting();
+  }
+
+  // The photos are gathered on the phone, so locking it or leaving the page would lose them.
   $effect(() => {
-    if (zipping) return hold();
+    if (zipping || saving) return hold();
   });
 
   $effect(() => {
@@ -769,15 +801,19 @@
       <button class="btn ghost" class:round={narrowed} aria-label="Cancel" onclick={cancelSelecting}>
         {#if narrowed}<Icon name="close" size={18} />{:else}Cancel{/if}
       </button>
-      {#if narrowed}
+      {#if narrowed && !saving}
         <button class="btn ghost" disabled={gathering || zipping} onclick={selectAll}>
           {#if gathering}<span class="spinner" style="width:16px;height:16px"></span>{/if}
           {allSelected ? 'Clear' : 'Select all'}
         </button>
       {/if}
-      <button class="btn" class:filling={zipping} style:--p="{zipped * 100}%" disabled={!selected.size || zipping} onclick={downloadSelected}>
-        {#if zipping}<span aria-live="polite">Preparing {zipped ? `${Math.floor(zipped * 100)}%` : '…'}</span>{:else}<Icon name="download" size={18} /> Download {selected.size || ''}{/if}
-      </button>
+      {#if saving}
+        <button class="btn accent" onclick={saveToPhotos}><Icon name="download" size={18} /> Save {saving.files.length} to Photos</button>
+      {:else}
+        <button class="btn" class:filling={zipping} style:--p="{zipped * 100}%" disabled={!selected.size || zipping} onclick={downloadSelected}>
+          {#if zipping}<span aria-live="polite">Preparing {zipped ? `${Math.floor(zipped * 100)}%` : '…'}</span>{:else}<Icon name="download" size={18} /> Download {selected.size || ''}{/if}
+        </button>
+      {/if}
     {:else}
       {#if jobs.length && !sheetOpen}
         <button class="btn ghost" onclick={() => (sheetOpen = true)}>{busyCount ? `${Math.round(overall * 100)}%` : 'Uploads'}</button>
