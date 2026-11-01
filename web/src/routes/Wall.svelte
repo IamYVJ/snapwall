@@ -102,6 +102,9 @@
   let selecting = $state(false);
   let selected = $state(new Set<string>());
   let zipping = $state(false);
+  /** How much of the chosen photos has downloaded into the ZIP, 0 to 1. */
+  let zipped = $state(0);
+  let zipStop: AbortController | null = null;
 
   let poll: ReturnType<typeof setInterval> | undefined;
 
@@ -181,7 +184,9 @@
       if (by !== want) return;
       const known = new Set(items.map((i) => i.id));
       const fresh = page.items.filter((i) => !known.has(i.id));
-      if (!next) {
+      // A wall on one page is taken whole, so photos the host hid go too. A longer one keeps what has been scrolled
+      // to or selected, and new photos join the top.
+      if (!page.next || !items.length) {
         items = page.items;
         next = page.next;
       } else if (fresh.length) {
@@ -492,21 +497,37 @@
       return;
     }
     zipping = true;
+    zipped = 0;
+    zipStop = new AbortController();
     try {
       const res = await zipMedia({
         filename: `${event?.name ?? 'snapwall'}.zip`,
         list: async () => chosen,
-        signal: new AbortController().signal,
-        onProgress: () => {},
+        signal: zipStop.signal,
+        onProgress: (p) => (zipped = p.totalBytes ? p.bytes / p.totalBytes : 0),
       });
       if (res) {
         selecting = false;
         selected = new Set();
       }
+    } catch (err) {
+      if (!zipStop.signal.aborted) throw err;
     } finally {
       zipping = false;
+      zipStop = null;
     }
   }
+
+  function cancelSelecting() {
+    zipStop?.abort();
+    selecting = false;
+    selected = new Set();
+  }
+
+  // The ZIP is put together on the phone, so locking it or leaving the page would lose the photos gathered so far.
+  $effect(() => {
+    if (zipping) return hold();
+  });
 
   $effect(() => {
     if (!sentinel || matches) return;
@@ -745,7 +766,7 @@
   <!-- Action bar -->
   <nav class="dock" class:tight={selecting && narrowed} aria-label="Actions">
     {#if selecting}
-      <button class="btn ghost" class:round={narrowed} aria-label="Cancel" onclick={() => ((selecting = false), (selected = new Set()))}>
+      <button class="btn ghost" class:round={narrowed} aria-label="Cancel" onclick={cancelSelecting}>
         {#if narrowed}<Icon name="close" size={18} />{:else}Cancel{/if}
       </button>
       {#if narrowed}
@@ -754,8 +775,8 @@
           {allSelected ? 'Clear' : 'Select all'}
         </button>
       {/if}
-      <button class="btn" disabled={!selected.size || zipping} onclick={downloadSelected}>
-        {#if zipping}<span class="spinner" style="width:16px;height:16px"></span> Preparing…{:else}<Icon name="download" size={18} /> Download {selected.size || ''}{/if}
+      <button class="btn" class:filling={zipping} style:--p="{zipped * 100}%" disabled={!selected.size || zipping} onclick={downloadSelected}>
+        {#if zipping}<span aria-live="polite">Preparing {zipped ? `${Math.floor(zipped * 100)}%` : '…'}</span>{:else}<Icon name="download" size={18} /> Download {selected.size || ''}{/if}
       </button>
     {:else}
       {#if jobs.length && !sheetOpen}
@@ -886,6 +907,15 @@
   /* Three buttons while selecting, still on one line on a phone. */
   .dock.tight .btn {
     padding: 0 12px;
+  }
+  /* The Download button fills up as the photos for the ZIP arrive. */
+  .dock .btn.filling {
+    opacity: 1;
+    cursor: progress;
+    border-color: var(--accent);
+    background: linear-gradient(to right, var(--accent) var(--p), var(--fg) var(--p));
+    font-variant-numeric: tabular-nums;
+    min-width: 136px;
   }
   .dock .btn.round {
     width: 44px;
