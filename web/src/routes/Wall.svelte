@@ -136,6 +136,10 @@
   const totalBytes = $derived(counted.reduce((s, j) => s + j.file.size, 0));
   const sentBytes = $derived(counted.reduce((s, j) => s + j.file.size * (j.status === 'done' ? 1 : j.progress), 0));
   const overall = $derived(totalBytes ? sentBytes / totalBytes : 0);
+  // Find me puts its matches on the wall, so the upload list makes way for them. The dock button brings it back.
+  $effect(() => {
+    if (findOpen) sheetOpen = false;
+  });
   // While a long list is going, finished files fold away so the ones still sending stay in view.
   const listed = $derived(busyCount && !showDone ? jobs.filter((j) => j.status !== 'done') : jobs);
 
