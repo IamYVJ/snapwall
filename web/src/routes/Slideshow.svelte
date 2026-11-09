@@ -81,6 +81,46 @@
     return null;
   }
 
+  /**
+   * The whole wall, not just its newest page, so a big event's older photos come round too. Live updates only fetch
+   * the newest page, so this also runs every RELOAD_ALL_MS: it drops photos hidden or deleted further down, and
+   * replaces signed links before they expire (they last 30–60 minutes) on a show that runs all evening.
+   */
+  const RELOAD_ALL_MS = 15 * 60_000;
+  let reloadTimer: ReturnType<typeof setInterval> | undefined;
+  async function reloadAll() {
+    try {
+      const all: MediaItem[] = [];
+      let cursor: string | null = null;
+      do {
+        const page = await api.media(cursor);
+        all.push(...page.items);
+        cursor = page.next;
+      } while (cursor && !live.signal.aborted);
+      if (live.signal.aborted) return;
+      // Keep anything newer that a live update brought in while the pages were loading.
+      const ids = new Set(all.map((i) => i.id));
+      const newest = all[0]?.createdAt ?? 0;
+      const keep = current?.id;
+      items = [...items.filter((i) => !ids.has(i.id) && i.createdAt > newest), ...all];
+      const at = keep ? photos.findIndex((p) => p.id === keep) : -1;
+      if (at >= 0) index = at;
+      queue = queue.filter((id) => photos.some((p) => p.id === id));
+    } catch (err) {
+      if (!wantsPin(err)) error = closedMessage(err) ?? error;
+    }
+  }
+
+  /** A slide that won't load (removed meanwhile, or not ready yet) is skipped after a moment. */
+  function slideFailed() {
+    const id = current?.id;
+    setTimeout(() => {
+      if (current?.id !== id) return;
+      advance();
+      startTimer();
+    }, 1000);
+  }
+
   /** Shows the PIN screen if the event wants a PIN (or a different one, if the host changed it). */
   function wantsPin(err: unknown): boolean {
     if (!(err instanceof ApiError) || !['pin_required', 'pin_wrong', 'pin_locked'].includes(err.code)) return false;
@@ -174,10 +214,14 @@
         error = 'Slideshow is off for this event.';
         return;
       }
+      // The newest page starts the show at once; the rest of the wall follows in the background.
       const first = await api.media();
       items = first.items;
       startTimer();
       void listen();
+      if (first.next) void reloadAll();
+      clearInterval(reloadTimer);
+      reloadTimer = setInterval(reloadAll, RELOAD_ALL_MS);
     } catch (err) {
       if (!wantsPin(err)) error = err instanceof ApiError ? err.message : 'Could not load the event.';
     }
@@ -200,6 +244,7 @@
 
   onDestroy(() => {
     clearInterval(timer);
+    clearInterval(reloadTimer);
     live.abort();
   });
 
@@ -238,7 +283,7 @@
     </form>
   {:else if current}
     {#key current.id}
-      <img class="slide" src={current.full} alt="" />
+      <img class="slide" src={current.full} alt="" onerror={slideFailed} />
     {/key}
     {#if current.uploader}<p class="credit">{current.uploader}</p>{/if}
   {:else if event}

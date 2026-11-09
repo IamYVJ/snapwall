@@ -86,6 +86,34 @@ describe('zipMedia', () => {
     expect(calls).toContain('https://api.test/m/b?v=2');
   });
 
+  test('fetches fresh links again each time a set expires during a long download', async () => {
+    // Big files download one at a time; each needs a newer set of links than the last, as hours go by.
+    const needs: Record<string, number> = { a: 1, b: 2, c: 3 };
+    vi.stubGlobal('fetch', async (url: string) => {
+      const u = new URL(url);
+      const id = u.pathname.split('/').pop()!;
+      return Number(u.searchParams.get('v')) >= needs[id] ? new Response(id) : new Response('', { status: 403 });
+    });
+    const big = { size: 200 * 1024 * 1024 };
+    let sets = 1;
+    const refresh = vi.fn(async () => {
+      sets++;
+      return ['a', 'b', 'c'].map((id) => item(id, `${id}.jpg`, { ...big, download: `https://api.test/m/${id}?v=${sets}` }));
+    });
+    const res = await run([item('a', 'a.jpg', big), item('b', 'b.jpg', big), item('c', 'c.jpg', big)], { refresh });
+    expect(res).toEqual({ saved: 3, failed: 0 });
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  test('carries on with the old links when new ones can’t be fetched', async () => {
+    serve({ b: [403, 403] });
+    const refresh = vi.fn(async (): Promise<MediaItem[]> => {
+      throw new Error('offline');
+    });
+    const res = await run([item('a', 'a.jpg'), item('b', 'b.jpg'), item('c', 'c.jpg')], { refresh });
+    expect(res).toEqual({ saved: 2, failed: 1 });
+  });
+
   test('reports progress through to the end', async () => {
     serve();
     const seen: number[] = [];

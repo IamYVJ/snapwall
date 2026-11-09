@@ -91,9 +91,19 @@
     flash(err instanceof ApiError ? err.message : 'Something went wrong');
   }
 
+  /** Signs in with Google and comes back to this event's page, not the home page. */
+  function signIn() {
+    try {
+      sessionStorage.setItem('snapwall.next', adminToken ? `a/${eventId}/${adminToken}` : `manage/${eventId}`);
+    } catch {
+      /* storage unavailable: lands on the home page, which lists the event */
+    }
+    location.href = signInUrl();
+  }
+
   async function load() {
     if (!adminToken && !session.get()) {
-      location.href = signInUrl();
+      signIn();
       return;
     }
     try {
@@ -130,11 +140,24 @@
     }
   }
 
+  let loadingMore = $state(false);
+
+  /** The next page of the current view. A page asked for before the filter or guest changed is dropped. */
   async function loadMore() {
-    if (!next) return;
-    const page = await api.media(next, filter, by);
-    items = [...items, ...page.items.filter((i) => !items.some((x) => x.id === i.id))];
-    next = page.next;
+    if (!next || loadingMore) return;
+    const want = { filter, by, next };
+    loadingMore = true;
+    try {
+      const page = await api.media(want.next, want.filter, want.by);
+      if (want.filter !== filter || want.by !== by || want.next !== next) return;
+      const known = new Set(items.map((i) => i.id));
+      items = [...items, ...page.items.filter((i) => !known.has(i.id))];
+      next = page.next;
+    } catch (err) {
+      fail(err);
+    } finally {
+      loadingMore = false;
+    }
   }
 
   async function showFilter(f: MediaFilter, reload = false, name = by) {
@@ -387,7 +410,7 @@
             : 'Please try again in a moment.'}
       </p>
       <div class="row" style="justify-content: center">
-        {#if errorCode === 'drive_disconnected' || errorCode === 'signin_required'}<a class="btn" href={signInUrl()}>Sign in</a>{/if}
+        {#if errorCode === 'drive_disconnected' || errorCode === 'signin_required'}<button class="btn" onclick={signIn}>Sign in</button>{/if}
         <a class="btn ghost" href="#/">Home</a>
       </div>
     </div>
@@ -657,7 +680,7 @@
           {/snippet}
         </MediaGrid>
         {#if next}
-          <div class="row" style="justify-content: center; padding: 24px 0"><button class="btn ghost" onclick={loadMore}>Load more</button></div>
+          <div class="row" style="justify-content: center; padding: 24px 0"><button class="btn ghost" onclick={loadMore} disabled={loadingMore}>{loadingMore ? 'Loading…' : 'Load more'}</button></div>
         {/if}
       {:else}
         <p class="muted empty">

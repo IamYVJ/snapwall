@@ -45,12 +45,21 @@ async function* fetchAll(
 
   let fresh: Promise<Map<string, MediaItem>> | null = null;
   async function get(item: MediaItem, retry = true): Promise<Response | null> {
-    const url = (fresh && (await fresh).get(item.id)?.download) || item.download;
+    const links = fresh;
+    const url = (links && (await links).get(item.id)?.download) || item.download;
     if (!url) return null;
     const res = await fetch(url, { referrerPolicy: 'no-referrer', signal: stop.signal });
-    // Signed links last 30–60 minutes. On expiry, new ones are fetched once and the file is tried again.
+    // Signed links last 30–60 minutes, so a long download outlives several sets. When this file's link has expired,
+    // a new set is fetched, unless another file already did since this one started, and the file is tried again.
     if (res.status === 403 && opts.refresh && retry) {
-      fresh ??= opts.refresh().then((all) => new Map(all.map((i) => [i.id, i])));
+      if (fresh === links) {
+        const before = links;
+        fresh = opts
+          .refresh()
+          .then((all) => new Map(all.map((i) => [i.id, i])))
+          // Couldn't get new links: carry on with the ones there were, so one failure doesn't fail every file after it.
+          .catch(() => before ?? new Map<string, MediaItem>());
+      }
       return get(item, false);
     }
     return res.ok && res.body ? res : null;
