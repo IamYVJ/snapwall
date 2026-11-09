@@ -8,12 +8,19 @@
 
   let { token }: { token: string } = $props();
 
+  // Shared with the guest wall, so a PIN entered on either works for both in this tab.
+  const pinKey = `snapwall.pin.${token}`;
   let pin: string | null = null;
   try {
-    pin = sessionStorage.getItem(`snapwall.pin.${token}`);
+    pin = sessionStorage.getItem(pinKey);
   } catch {
     /* storage unavailable */
   }
+  /** The slideshow is often opened in a new tab or on another screen, where no PIN was entered yet, so it asks itself. */
+  let askPin = $state(false);
+  let pinInput = $state('');
+  let pinError = $state('');
+  let checking = $state(false);
   const api = guestApi(token, () => pin);
   const SLIDE_MS = 6000;
   // A new photo cuts in as soon as it has loaded, but never before the current one has been up this long.
@@ -71,8 +78,15 @@
     if (!(err instanceof ApiError)) return null;
     if (err.code === 'event_disabled' || err.code === 'event_not_found') return 'This event is closed.';
     if (err.code === 'view_disabled') return 'Slideshow is off for this event.';
-    if (err.status === 401) return err.message;
     return null;
+  }
+
+  /** Shows the PIN screen if the event wants a PIN (or a different one, if the host changed it). */
+  function wantsPin(err: unknown): boolean {
+    if (!(err instanceof ApiError) || !['pin_required', 'pin_wrong', 'pin_locked'].includes(err.code)) return false;
+    pinError = err.code === 'pin_wrong' ? 'That PIN isn’t right.' : err.code === 'pin_locked' ? err.message : '';
+    askPin = true;
+    return true;
   }
 
   let refreshing = false;
@@ -99,7 +113,7 @@
       queue = [...queue.filter((id) => photos.some((p) => p.id === id)), ...fresh];
       if (fresh.length) void cutToNew();
     } catch (err) {
-      error = closedMessage(err) ?? error;
+      if (!wantsPin(err)) error = closedMessage(err) ?? error;
     } finally {
       refreshing = false;
       if (again) {
@@ -112,9 +126,20 @@
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   /** Keeps a live stream open; every version change refetches the media list. Falls back to polling. */
+  let listening = false;
   async function listen() {
+    if (listening) return;
+    listening = true;
+    try {
+      await stream();
+    } finally {
+      listening = false;
+    }
+  }
+
+  async function stream() {
     let seen: string | null = null;
-    while (!live.signal.aborted && !error) {
+    while (!live.signal.aborted && !error && !askPin) {
       const started = Date.now();
       try {
         await api.live((data) => {
@@ -126,7 +151,7 @@
           }
         }, live.signal);
       } catch (err) {
-        if (live.signal.aborted) return;
+        if (live.signal.aborted || wantsPin(err)) return;
         const closed = closedMessage(err);
         if (closed) {
           error = closed;
@@ -141,9 +166,10 @@
     }
   }
 
-  onMount(async () => {
+  async function start() {
     try {
       event = await api.event();
+      askPin = false;
       if (!event.settings.guestView) {
         error = 'Slideshow is off for this event.';
         return;
@@ -153,9 +179,24 @@
       startTimer();
       void listen();
     } catch (err) {
-      error = err instanceof ApiError ? err.message : 'Could not load the event.';
+      if (!wantsPin(err)) error = err instanceof ApiError ? err.message : 'Could not load the event.';
     }
-  });
+  }
+
+  async function submitPin(e: SubmitEvent) {
+    e.preventDefault();
+    pin = pinInput.trim();
+    try {
+      sessionStorage.setItem(pinKey, pin);
+    } catch {
+      /* storage unavailable: the PIN lasts until the page closes */
+    }
+    checking = true;
+    await start();
+    checking = false;
+  }
+
+  onMount(start);
 
   onDestroy(() => {
     clearInterval(timer);
@@ -170,9 +211,31 @@
 
 <svelte:head><title>{event ? `${event.name} · Slideshow` : 'Slideshow'}</title></svelte:head>
 
-<div class="show" role="button" tabindex="0" ondblclick={fullscreen} onkeydown={(e) => e.key === 'f' && fullscreen()}>
+<div
+  class="show"
+  class:asking={askPin}
+  role="button"
+  tabindex="0"
+  ondblclick={(e) => e.target === e.currentTarget && fullscreen()}
+  onkeydown={(e) => e.target === e.currentTarget && e.key === 'f' && fullscreen()}
+>
   {#if error}
     <p class="msg">{error}</p>
+  {:else if askPin}
+    <form class="msg pinform" onsubmit={submitPin}>
+      <p class="title">Enter the event PIN</p>
+      <input
+        class="pin"
+        bind:value={pinInput}
+        inputmode="numeric"
+        autocomplete="off"
+        maxlength="8"
+        placeholder="••••"
+        aria-label="PIN"
+      />
+      {#if pinError}<p class="pin-error">{pinError}</p>{/if}
+      <div><button class="btn" type="submit" disabled={pinInput.trim().length < 4 || checking}>Start slideshow</button></div>
+    </form>
   {:else if current}
     {#key current.id}
       <img class="slide" src={current.full} alt="" />
@@ -185,7 +248,7 @@
     </div>
   {/if}
 
-  {#if event && !error}
+  {#if event && !error && !askPin}
     <aside class="corner">
       <div class="qrwrap"><QR value={guestUrl} label="Scan to add photos" /></div>
       <div>
@@ -241,6 +304,34 @@
   }
   .msg .title {
     color: #f2f0ec;
+  }
+  .show.asking {
+    cursor: auto;
+  }
+  .pinform {
+    gap: 16px;
+  }
+  .pinform .title {
+    font-family: var(--serif);
+    font-size: 28px;
+    margin: 0;
+  }
+  .pin {
+    font: inherit;
+    font-size: 28px;
+    letter-spacing: 0.4em;
+    text-align: center;
+    width: 220px;
+    margin-inline: auto;
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid #3a3835;
+    background: #1a1918;
+    color: #f2f0ec;
+  }
+  .pin-error {
+    margin: 0;
+    color: #f0a39a;
   }
   .corner {
     position: absolute;

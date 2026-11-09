@@ -135,6 +135,7 @@ me.delete('/', async (c) => {
   const db = c.env.DB;
   await db.batch([
     db.prepare('DELETE FROM uploads WHERE event_id IN (SELECT id FROM events WHERE owner_id = ?)').bind(owner.id),
+    db.prepare('DELETE FROM pin_failures WHERE event_id IN (SELECT id FROM events WHERE owner_id = ?)').bind(owner.id),
     db.prepare('DELETE FROM events WHERE owner_id = ?').bind(owner.id),
     db.prepare('DELETE FROM sessions WHERE owner_id = ?').bind(owner.id),
     db.prepare('DELETE FROM owners WHERE id = ?').bind(owner.id),

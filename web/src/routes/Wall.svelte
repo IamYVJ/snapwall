@@ -70,7 +70,7 @@
   let phase = $state<'loading' | 'pin' | 'ready' | 'error'>('loading');
   let errorCode = $state('');
   let pinInput = $state('');
-  let pinWrong = $state(false);
+  let pinError = $state('');
   let event = $state<PublicEvent | null>(null);
   let items = $state<MediaItem[]>([]);
   let next = $state<string | null>(null);
@@ -171,8 +171,8 @@
       }
     } catch (err) {
       const code = err instanceof ApiError ? err.code : 'error';
-      if (code === 'pin_required' || code === 'pin_wrong') {
-        pinWrong = code === 'pin_wrong';
+      if (code === 'pin_required' || code === 'pin_wrong' || code === 'pin_locked') {
+        pinError = code === 'pin_wrong' ? 'That PIN isn’t right.' : code === 'pin_locked' ? (err as ApiError).message : '';
         phase = 'pin';
       } else {
         errorCode = code;
@@ -615,7 +615,7 @@
         placeholder="••••"
         aria-label="PIN"
       />
-      {#if pinWrong}<p class="error-text">That PIN isn’t right.</p>{/if}
+      {#if pinError}<p class="error-text">{pinError}</p>{/if}
       <div><button class="btn" type="submit" disabled={pinInput.length < 4}>Continue</button></div>
     </form>
   </div>

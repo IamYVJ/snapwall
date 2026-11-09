@@ -226,6 +226,7 @@ events.delete('/:id', async (c) => {
   const db = c.env.DB;
   await db.batch([
     db.prepare('DELETE FROM uploads WHERE event_id = ?').bind(event.id),
+    db.prepare('DELETE FROM pin_failures WHERE event_id = ?').bind(event.id),
     db.prepare('DELETE FROM events WHERE id = ?').bind(event.id),
   ]);
   return c.json({ ok: true });

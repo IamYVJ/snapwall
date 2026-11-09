@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { MediaItem } from '../../../shared/types';
-  import { isVideo, timeAgo } from '../lib/format';
+  import { onDestroy } from 'svelte';
+  import { PREVIEW_RETRY_MS, isVideo, retryUrl, timeAgo } from '../lib/format';
   import Icon from './Icon.svelte';
 
   let {
@@ -13,6 +14,28 @@
   // Checked as each photo opens; the server has the final say if the time runs out while it's open.
   const canDelete = $derived(!!ondelete && !!item?.deletableUntil && item.deletableUntil > Date.now() / 1000);
   let touchX = 0;
+
+  /**
+   * A photo opened right after its upload may not be ready yet (iPhone photos wait for Drive's copy browsers can
+   * show), so it is asked for again for a while. Only the photo on screen is tracked.
+   */
+  let retry = $state<{ id: string; n: number; gaveUp: boolean } | null>(null);
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  onDestroy(() => clearTimeout(retryTimer));
+
+  function fullFailed(id: string) {
+    const n = retry?.id === id ? retry.n : 0;
+    clearTimeout(retryTimer);
+    if (n >= PREVIEW_RETRY_MS.length) {
+      retry = { id, n, gaveUp: true };
+      return;
+    }
+    retry = { id, n, gaveUp: false };
+    retryTimer = setTimeout(() => {
+      if (retry?.id === id) retry = { id, n: n + 1, gaveUp: false };
+    }, PREVIEW_RETRY_MS[n]);
+  }
+  const mine = $derived(item && retry?.id === item.id ? retry : null);
 
   const close = () => (index = null);
   const step = (d: number) => {
@@ -68,7 +91,20 @@
           <!-- svelte-ignore a11y_media_has_caption -->
           <video src={item.full} poster={item.thumb} controls playsinline autoplay></video>
         {:else}
-          <img src={item.full} alt={item.name} />
+          {#if mine}
+            <p class="wait">
+              {#if mine.gaveUp}This photo can’t be shown yet. Try again in a few minutes.{:else}<span class="spinner"></span> Preparing photo…{/if}
+            </p>
+          {/if}
+          <img
+            class:retrying={!!mine}
+            src={retryUrl(item.full, mine?.n)}
+            alt={item.name}
+            onload={() => {
+              if (retry?.id === item.id) retry = null;
+            }}
+            onerror={() => fullFailed(item.id)}
+          />
         {/if}
       {/key}
     </div>
@@ -138,6 +174,25 @@
     max-height: calc(100% - max(16px, env(safe-area-inset-bottom)));
     object-fit: contain;
     animation: fade 0.25s ease both;
+  }
+  .stage img.retrying {
+    opacity: 0;
+  }
+  .wait {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 24px;
+    text-align: center;
+    color: #bdb9b2;
+  }
+  .wait .spinner {
+    width: 20px;
+    height: 20px;
   }
   .nav {
     position: absolute;

@@ -23,16 +23,49 @@ import {
 const RATE_WINDOW = 600;
 const RATE_MAX = 300;
 
+/**
+ * Wrong PINs one network may send per event in PIN_WINDOW seconds before it has to wait. Enough for a venue's guests
+ * sharing one Wi-Fi to mistype now and then, while a 4-digit PIN would take days to guess.
+ */
+export const PIN_WINDOW = 600;
+export const PIN_MAX_FAILS = 30;
+
+/** The network a request comes from: the IPv4 address, or an IPv6 address's /64, since one device usually holds a whole /64. */
+export function networkOf(ip: string): string {
+  if (!ip.includes(':')) return ip;
+  const [head, tail] = ip.split('::');
+  const front = head ? head.split(':') : [];
+  const back = tail ? tail.split(':') : [];
+  const groups = tail === undefined ? front : [...front, ...Array<string>(Math.max(0, 8 - front.length - back.length)).fill('0'), ...back];
+  return `${groups
+    .slice(0, 4)
+    .map((g) => (parseInt(g, 16) || 0).toString(16))
+    .join(':')}::/64`;
+}
+
 /** Resolves the guest link. Disabled events and wrong PINs never reveal anything beyond the event name. */
 async function guestEvent(c: Ctx): Promise<{ event: EventRow; settings: EventSettings }> {
+  const db = c.env.DB;
   const hash = await sha256(c.req.param('token') ?? '');
-  const event = await c.env.DB.prepare('SELECT * FROM events WHERE guest_hash = ?').bind(hash).first<EventRow>();
+  const event = await db.prepare('SELECT * FROM events WHERE guest_hash = ?').bind(hash).first<EventRow>();
   if (!event) throw new HttpError(404, 'event_not_found', 'This link is not valid');
   if (event.status !== 'active') throw new HttpError(403, 'event_disabled', 'This event has been closed by the host');
   if (event.pin_hash) {
     const pin = c.req.header('X-Event-Pin');
     if (!pin) throw new HttpError(401, 'pin_required', event.name);
-    if ((await pinHash(event.id, pin)) !== event.pin_hash) throw new HttpError(401, 'pin_wrong', event.name);
+    // Checked before the PIN itself, so a locked-out network learns nothing from its guesses.
+    const source = await sha256(`pin:${networkOf(c.req.header('CF-Connecting-IP') ?? '')}:${event.id}:${c.env.SIGNING_KEY}`);
+    const fails = await db
+      .prepare('SELECT COUNT(*) AS n FROM pin_failures WHERE event_id = ? AND source = ? AND created_at > ?')
+      .bind(event.id, source, now() - PIN_WINDOW)
+      .first<number>('n');
+    if ((fails ?? 0) >= PIN_MAX_FAILS) {
+      throw new HttpError(429, 'pin_locked', 'Too many wrong PINs. Please wait a few minutes and try again.');
+    }
+    if ((await pinHash(event.id, pin)) !== event.pin_hash) {
+      await db.prepare('INSERT INTO pin_failures (event_id, source, created_at) VALUES (?, ?, ?)').bind(event.id, source, now()).run();
+      throw new HttpError(401, 'pin_wrong', event.name);
+    }
   }
   return { event, settings: parseSettings(event.settings) };
 }
@@ -234,13 +267,18 @@ guest.post('/:token/uploads', async (c) => {
 guest.post('/:token/uploads/:uid/complete', async (c) => {
   const { event, settings } = await guestEvent(c);
   const db = c.env.DB;
-  const u = await db
-    .prepare(`SELECT * FROM uploads WHERE id = ? AND event_id = ? AND status = 'pending'`)
-    .bind(c.req.param('uid'), event.id)
-    .first<UploadRow>();
+  const findRow = () =>
+    db.prepare(`SELECT * FROM uploads WHERE id = ? AND event_id = ?`).bind(c.req.param('uid'), event.id).first<UploadRow>();
+  const u = await findRow();
   if (!u) throw new HttpError(404, 'upload_not_found');
   const { fileId } = await readJson<{ fileId?: string }>(c);
   if (typeof fileId !== 'string' || !/^[\w-]{10,200}$/.test(fileId)) throw new HttpError(400, 'bad_file_id');
+  // Asked again after the answer to an earlier try was lost on a phone's patchy connection: it's already saved.
+  const finished = async (row: UploadRow) => c.json(await toMediaItem(c, event, row, 'g', settings, await deviceKey(c, event)));
+  if (u.status === 'done') {
+    if (u.file_id !== fileId) throw new HttpError(404, 'upload_not_found');
+    return finished(u);
+  }
 
   const owner = await db.prepare('SELECT * FROM owners WHERE id = ?').bind(event.owner_id).first<OwnerRow>();
   const drive = await driveFor(c.env, owner!);
@@ -255,13 +293,17 @@ guest.post('/:token/uploads/:uid/complete', async (c) => {
   const saved = await db
     .prepare(
       `UPDATE uploads SET file_id = ?, status = 'done', hidden = ?, review = ?, size = ?, md5 = ?, created_at = ?
-       WHERE id = ? AND NOT EXISTS (SELECT 1 FROM uploads WHERE event_id = ? AND md5 = ? AND status = 'done')`,
+       WHERE id = ? AND status = 'pending'
+         AND NOT EXISTS (SELECT 1 FROM uploads WHERE event_id = ? AND md5 = ? AND status = 'done' AND id != ?)`,
     )
-    .bind(file.id, review, review, Number(file.size ?? u.size), md5, now(), u.id, event.id, md5)
+    .bind(file.id, review, review, Number(file.size ?? u.size), md5, now(), u.id, event.id, md5, u.id)
     .run();
   if (!saved.meta.changes) {
+    // A repeat of this same request that got there first is not a copy: keep its file.
+    const latest = await findRow();
+    if (latest?.status === 'done' && latest.file_id === file.id) return finished(latest);
     await drive.trash(file.id).catch(() => undefined);
-    await db.prepare('DELETE FROM uploads WHERE id = ?').bind(u.id).run();
+    await db.prepare(`DELETE FROM uploads WHERE id = ? AND status = 'pending'`).bind(u.id).run();
     throw new HttpError(409, 'duplicate', 'Already uploaded');
   }
   await bumpMedia(db, event.id).run();

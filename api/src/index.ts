@@ -56,6 +56,7 @@ export default {
     await env.DB.batch([
       env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(now()),
       env.DB.prepare(`DELETE FROM uploads WHERE status = 'pending' AND created_at < ?`).bind(now() - 2 * 86400),
+      env.DB.prepare('DELETE FROM pin_failures WHERE created_at < ?').bind(now() - 86400),
     ]);
   },
 } satisfies ExportedHandler<Env>;

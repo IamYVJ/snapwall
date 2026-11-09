@@ -1,7 +1,7 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
+  import { onDestroy, type Snippet } from 'svelte';
   import type { MediaItem } from '../../../shared/types';
-  import { isVideo } from '../lib/format';
+  import { PREVIEW_RETRY_MS, isVideo, retryUrl } from '../lib/format';
   import Icon from './Icon.svelte';
 
   let {
@@ -24,6 +24,30 @@
   } = $props();
 
   let failed = $state<Record<string, boolean>>({});
+  /** Tries so far for previews that didn't load, which is normal for a minute or so after an upload. */
+  let tries = $state<Record<string, number>>({});
+  /** Bumped when a retry is due; changing the address makes the browser ask again. */
+  let waits = $state<Record<string, number>>({});
+  const timers = new Set<ReturnType<typeof setTimeout>>();
+  onDestroy(() => timers.forEach(clearTimeout));
+
+  function retry(id: string) {
+    const n = tries[id] ?? 0;
+    if (n >= PREVIEW_RETRY_MS.length) {
+      failed[id] = true;
+      return;
+    }
+    tries[id] = n + 1;
+    const t = setTimeout(() => {
+      timers.delete(t);
+      waits[id] = (waits[id] ?? 0) + 1;
+    }, PREVIEW_RETRY_MS[n]);
+    timers.add(t);
+  }
+  const loaded = (id: string) => {
+    delete tries[id];
+    delete waits[id];
+  };
 </script>
 
 <ul class="grid">
@@ -40,7 +64,21 @@
             <span class="small">{isVideo(item.mime) ? 'Video processing' : 'Preview unavailable'}</span>
           </span>
         {:else}
-          <img src={item.thumb} alt="" loading="lazy" decoding="async" onerror={() => (failed[item.id] = true)} />
+          {#if tries[item.id]}
+            <span class="placeholder">
+              <span class="spinner" style="width: 22px; height: 22px"></span>
+              <span class="small">Preparing preview…</span>
+            </span>
+          {/if}
+          <img
+            class:retrying={!!tries[item.id]}
+            src={retryUrl(item.thumb, waits[item.id])}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            onload={() => loaded(item.id)}
+            onerror={() => retry(item.id)}
+          />
         {/if}
         {#if isVideo(item.mime) && !failed[item.id]}
           <span class="badge"><Icon name="play" size={14} /></span>
@@ -109,6 +147,13 @@
     transition:
       transform 0.5s ease,
       opacity 0.2s ease;
+  }
+  /* Kept in the page so the browser keeps asking, but out of sight behind the placeholder until it loads. */
+  img.retrying {
+    position: absolute;
+    inset: 0;
+    min-height: 0;
+    opacity: 0;
   }
   .hit:hover img {
     transform: scale(1.02);

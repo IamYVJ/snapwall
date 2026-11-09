@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
+import { PIN_MAX_FAILS, PIN_WINDOW, networkOf } from '../src/guest';
 import { ORIGIN, driveError, driveJson, fakeDrive, startHarness, type Harness } from './harness';
 
 let h: Harness;
@@ -31,6 +32,37 @@ describe('guest link', () => {
     expect((await h.call(`/g/${e.guestToken}`, { headers: { 'X-Event-Pin': '0000' } })).body.error).toBe('pin_wrong');
     const ok = await h.call(`/g/${e.guestToken}/media`, { headers: { 'X-Event-Pin': '4321' } });
     expect(ok.status).toBe(200);
+  });
+
+  test('too many wrong PINs from one network lock it out, even with the right PIN', async () => {
+    const e = await h.seedEvent({ pin: '4321' });
+    const guess = (pin: string, ip: string) => h.call(`/g/${e.guestToken}`, { headers: { 'X-Event-Pin': pin, 'CF-Connecting-IP': ip } });
+    for (let i = 0; i < PIN_MAX_FAILS; i++) expect((await guess(String(1000 + i), '198.51.100.7')).body.error).toBe('pin_wrong');
+    const locked = await guess('4321', '198.51.100.7');
+    expect(locked.status).toBe(429);
+    expect(locked.body.error).toBe('pin_locked');
+    // Another network is unaffected.
+    expect((await guess('4321', '198.51.100.8')).status).toBe(200);
+    // Once the window has passed, the right PIN works again.
+    await h.env.DB.prepare('UPDATE pin_failures SET created_at = created_at - ?').bind(PIN_WINDOW + 1).run();
+    expect((await guess('4321', '198.51.100.7')).status).toBe(200);
+  }, 30_000); // dozens of requests in a row
+
+  test('IPv6 guesses count per /64, so rotating addresses within it does not help', async () => {
+    const e = await h.seedEvent({ pin: '4321' });
+    for (let i = 0; i < PIN_MAX_FAILS; i++) {
+      await h.call(`/g/${e.guestToken}`, { headers: { 'X-Event-Pin': '0000', 'CF-Connecting-IP': `2001:db8:1:2::${(i + 1).toString(16)}` } });
+    }
+    const r = await h.call(`/g/${e.guestToken}`, { headers: { 'X-Event-Pin': '4321', 'CF-Connecting-IP': '2001:db8:1:2:aaaa::1' } });
+    expect(r.body.error).toBe('pin_locked');
+  }, 30_000);
+
+  test('networkOf keeps IPv4 whole and IPv6 to its /64', () => {
+    expect(networkOf('203.0.113.5')).toBe('203.0.113.5');
+    expect(networkOf('2001:db8:1:2::9')).toBe('2001:db8:1:2::/64');
+    expect(networkOf('2001:0db8:0001:0002:0003:0004:0005:0006')).toBe('2001:db8:1:2::/64');
+    expect(networkOf('2001:db8::1')).toBe('2001:db8:0:0::/64');
+    expect(networkOf('::1')).toBe('0:0:0:0::/64');
   });
 
   test('upload-only events hide the wall, the guest list and the live stream', async () => {
@@ -342,6 +374,36 @@ describe('exact copies', () => {
     expect(await row(u.id)).toBeNull();
   });
 
+  test('finishing again after a lost answer returns the saved upload instead of an error', async () => {
+    const e = await h.seedEvent({ drive: true });
+    const u = await h.seedUpload(e.id, { status: 'pending', file_id: null });
+    const calls = driveWithFile(u.id, 'aaa111');
+    const first = await complete(e.guestToken, u.id);
+    const again = await complete(e.guestToken, u.id);
+    expect(first.status).toBe(200);
+    expect(again.status).toBe(200);
+    expect(again.body.id).toBe(u.id);
+    expect(await row(u.id)).toEqual({ status: 'done', md5: 'aaa111' });
+    expect(calls.filter((c) => c.method === 'PATCH')).toEqual([]); // nothing was trashed
+  });
+
+  test('the same request arriving twice at once keeps the file', async () => {
+    const e = await h.seedEvent({ drive: true });
+    const u = await h.seedUpload(e.id, { status: 'pending', file_id: null });
+    const calls = driveWithFile(u.id, 'aaa111');
+    const results = await Promise.all([complete(e.guestToken, u.id), complete(e.guestToken, u.id)]);
+    expect(results.map((r) => r.status)).toEqual([200, 200]);
+    expect(await row(u.id)).toEqual({ status: 'done', md5: 'aaa111' });
+    expect(calls.filter((c) => c.method === 'PATCH')).toEqual([]);
+  });
+
+  test('a finished upload can’t be finished again with a different file', async () => {
+    const e = await h.seedEvent({ drive: true });
+    const u = await h.seedUpload(e.id);
+    const r = await h.call(`/g/${e.guestToken}/uploads/${u.id}/complete`, { method: 'POST', json: { fileId: 'otherfile000' } });
+    expect(r.body.error).toBe('upload_not_found');
+  });
+
   test('copies in other events, and unfinished uploads, don’t count', async () => {
     const e = await h.seedEvent({ drive: true });
     const other = await h.seedEvent();
@@ -370,5 +432,30 @@ test('two copies finishing at the same moment keep only one', async () => {
     expect(await h.env.DB.prepare(`SELECT COUNT(*) AS n FROM uploads WHERE event_id = ?`).bind(e.id).first('n')).toBe(1);
   } finally {
     vi.unstubAllGlobals();
+  }
+});
+
+test('paging keeps every upload when IDs contain "_" and share a second', async () => {
+  const e = await h.seedEvent();
+  const ts = 1_700_000_000;
+  // Base64url IDs can hold "_", even first. These sort so that each kind ends a page.
+  const ids = [...Array.from({ length: 59 }, (_, i) => `z${String(i).padStart(3, '0')}`), 'k_9x', 'k_5a', 'k-1', '_b', '_a', 'A9'];
+  for (const id of ids) await h.seedUpload(e.id, { id, created_at: ts });
+  const seen: string[] = [];
+  let cursor: string | null = null;
+  do {
+    const r: { body: { items: { id: string }[]; next: string | null } } = await h.call(
+      `/g/${e.guestToken}/media${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`,
+    );
+    seen.push(...r.body.items.map((i) => i.id));
+    cursor = r.body.next;
+  } while (cursor);
+  expect(seen.sort()).toEqual([...ids].sort());
+});
+
+test('a malformed cursor is refused', async () => {
+  const e = await h.seedEvent();
+  for (const cursor of ['nonsense', '_abc', '123_', 'abc_def']) {
+    expect((await h.call(`/g/${e.guestToken}/media?cursor=${cursor}`)).body.error).toBe('bad_cursor');
   }
 });

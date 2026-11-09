@@ -11,6 +11,8 @@ type Audience = 'g' | 'a';
 const PAGE = 60;
 const THUMB_PX = 640;
 const FULL_PX = 2048;
+/** Photo types every browser can show as they are. HEIC/HEIF (iPhone photos) need Drive's JPEG thumbnail. */
+const WEB_IMAGES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif']);
 
 // Expiry is rounded to 30-minute buckets so URLs stay stable between polls and the browser can cache them.
 const expiry = () => (Math.floor(now() / 1800) + 2) * 1800;
@@ -74,9 +76,13 @@ export async function listMedia(
     args.push(by);
   }
   if (cursor) {
-    const [ts, id] = cursor.split('_');
+    // Upload IDs are base64url and may contain "_" themselves, so only the first one separates the timestamp.
+    const cut = cursor.indexOf('_');
+    const ts = Number(cursor.slice(0, cut));
+    const id = cursor.slice(cut + 1);
+    if (cut < 1 || !Number.isInteger(ts) || !id) throw new HttpError(400, 'bad_cursor');
     sql += ' AND (created_at < ? OR (created_at = ? AND id < ?))';
-    args.push(Number(ts), Number(ts), id);
+    args.push(ts, ts, id);
   }
   sql += ` ORDER BY created_at DESC, id DESC LIMIT ${PAGE + 1}`;
   const { results } = await c.env.DB.prepare(sql).bind(...args).all<UploadRow>();
@@ -169,8 +175,10 @@ media.get('/:event/:upload/:kind', async (c) => {
       );
       return new Response(body, { headers: mediaHeaders(headers) });
     }
-    // Drive has not generated a thumbnail yet (common for fresh videos).
-    if (kind === 'thumb') throw new HttpError(404, 'no_thumbnail');
+    // Drive has not made a thumbnail yet, which takes from seconds to a few minutes after an upload (longer for
+    // videos). Until then a photo browsers can show is sent as it is; anything else answers 404 and the page asks again.
+    if (kind === 'thumb' && !isImage) throw new HttpError(404, 'no_thumbnail');
+    if (!WEB_IMAGES.has(upload.mime)) throw new HttpError(404, 'no_thumbnail');
   }
 
   const res = await drive.media(upload.file_id, c.req.header('Range'));
@@ -180,5 +188,8 @@ media.get('/:event/:upload/:kind', async (c) => {
     if (v) headers.set(h, v);
   }
   headers.set('Content-Disposition', contentDisposition(kind === 'dl' ? 'attachment' : 'inline', upload.name));
-  return new Response(res.body, { status: res.status, headers: mediaHeaders(headers) });
+  mediaHeaders(headers);
+  // A stand-in for a thumbnail Drive hasn't made yet: kept briefly, so the real, smaller one replaces it soon.
+  if (kind !== 'dl' && isImage) headers.set('Cache-Control', 'private, max-age=60');
+  return new Response(res.body, { status: res.status, headers });
 });

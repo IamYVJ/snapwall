@@ -45,7 +45,7 @@ export async function startHarness() {
   }
 
   async function reset() {
-    await env.DB.batch(['uploads', 'sessions', 'events', 'owners'].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+    await env.DB.batch(['uploads', 'pin_failures', 'sessions', 'events', 'owners'].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
   }
 
   /** An owner (without Drive access) and one event. Returns the tokens a guest and an admin would hold. */

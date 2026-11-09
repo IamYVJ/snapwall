@@ -79,6 +79,15 @@ export function sizeLabel(mb: number): string {
 
 export const isVideo = (mime: string) => mime.startsWith('video/');
 
+/**
+ * Waits before asking again for a preview that didn't load. Drive makes thumbnails from seconds to a few minutes after
+ * an upload, so this covers about two minutes before the tile says the preview is unavailable.
+ */
+export const PREVIEW_RETRY_MS = [2000, 5000, 10000, 20000, 30000, 45000];
+
+/** A media link with a retry count added, so the browser asks again. Signed links ignore extra parameters. */
+export const retryUrl = (url: string, attempt: number | undefined) => (attempt ? `${url}&retry=${attempt}` : url);
+
 /** Drive's own units: "15 GB" is 15 GiB, so use powers of 1024 to match what Google shows the host. */
 export function bytesLabel(bytes: number): string {
   const gb = bytes / 2 ** 30;
