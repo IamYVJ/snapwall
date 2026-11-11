@@ -9,6 +9,7 @@
     drive_scope:
       'SnapWall needs permission to create files in your Google Drive — that is where your guests’ photos are saved. Please sign in again and keep the Drive box ticked.',
     state: 'That sign-in link expired. Please try again.',
+    elsewhere: 'That sign-in didn’t start in this browser, so it wasn’t used. If you meant to sign in, please try again here.',
   };
 </script>
 

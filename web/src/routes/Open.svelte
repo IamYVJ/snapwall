@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { install } from '../lib/install.svelte';
   import { go } from '../lib/router.svelte';
   import { decodeHandoff } from '../lib/saved';
   import { saved } from '../lib/saved.svelte';
@@ -22,7 +23,9 @@
       /* storage unavailable */
     }
     const handoff = first ? decodeHandoff(code) : null;
-    if (handoff) saved.receive(handoff);
+    // Only the installed app is started with a sign-in. One in a link opened anywhere else could be someone else's,
+    // sent to sign this person in to their account, so it's left out.
+    if (handoff) saved.receive(install.standalone ? handoff : { ...handoff, session: null });
     // Replace the history entry so the sign-in and links don't linger in back/forward history.
     go(handoff?.to ?? '', { replace: true });
   });

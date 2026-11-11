@@ -67,7 +67,34 @@ const authed = (): HeadersInit => {
   return s ? { Authorization: `Bearer ${s}` } : {};
 };
 
-export const signInUrl = () => `${API_URL}/auth/google/start`;
+const randomId = (bytes: number) =>
+  btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(bytes))))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+
+const SIGNIN_KEY = 'snapwall.signin';
+
+/**
+ * This browser's sign-in check. The API hands it back with the new session, and a session that comes back without it
+ * was started somewhere else, such as a link someone sent to sign this person in to their own account.
+ */
+function signInNonce(): string {
+  const s = store();
+  let n = s?.getItem(SIGNIN_KEY) ?? null;
+  if (!n) {
+    n = randomId(18);
+    s?.setItem(SIGNIN_KEY, n);
+  }
+  return n;
+}
+
+export const signInUrl = () => `${API_URL}/auth/google/start?n=${signInNonce()}`;
+
+/** True when a session handed back by the API was started by signing in from this browser. */
+export const signedInHere = (nonce: string) => {
+  const kept = store()?.getItem(SIGNIN_KEY);
+  return !!nonce && !!kept && nonce === kept;
+};
 
 export const owner = {
   me: () => request<Me>('/me', { headers: authed() }),
@@ -121,8 +148,7 @@ function guestId(): string | null {
   const s = store();
   let id = s?.getItem(GUEST_KEY) ?? null;
   if (!id) {
-    const bytes = crypto.getRandomValues(new Uint8Array(18));
-    id = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_');
+    id = randomId(18);
     s?.setItem(GUEST_KEY, id);
   }
   return id;

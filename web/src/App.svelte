@@ -24,7 +24,7 @@
   {#if parts.length === 0}
     <Home />
   {:else if parts[0] === 'auth' && parts[1]}
-    <Auth token={parts[1]} />
+    <Auth token={parts[1]} nonce={parts[2] ?? ''} />
   {:else if parts[0] === 'open' && parts[1]}
     <Open code={parts[1]} />
   {:else if parts[0] === 'signin-error'}

@@ -120,10 +120,12 @@
   });
   let sentinel = $state<HTMLElement>();
 
-  // Per-guest limits: what the server counted at load, plus everything queued or sent from this page since.
+  // Per-guest limits: what the server counted at load, plus everything queued or sent from this page since. A file the
+  // guest deleted no longer counts, as the server forgets it too.
+  const counts = (j: Job) => j.status !== 'error' && !j.duplicate && !j.repeat && !j.deleted;
   const limits = $derived.by(() => {
     if (!event?.usage) return null;
-    const mine = jobs.filter((j) => j.status !== 'error' && !j.duplicate && !j.repeat);
+    const mine = jobs.filter(counts);
     return {
       files: event.settings.guestMaxFiles === null ? null : event.settings.guestMaxFiles - event.usage.files - mine.length,
       bytes:
@@ -177,6 +179,7 @@
       } else {
         errorCode = code;
         phase = 'error';
+        if (code === 'event_not_found') saved.forget(`e/${token}`);
       }
     }
   }
@@ -204,6 +207,7 @@
         clearInterval(poll);
         errorCode = err.code;
         phase = 'error';
+        if (err.code === 'event_not_found') saved.forget(`e/${token}`);
       }
     }
   }
@@ -444,7 +448,13 @@
     items = items.filter((i) => i.id !== item.id);
     if (matches) matches = matches.filter((i) => i.id !== item.id);
     if (event && wasShown) event.count = Math.max(0, event.count - 1);
-    for (const j of jobs) if (j.item?.id === item.id) j.deleted = true;
+    const job = jobs.find((j) => j.item?.id === item.id && !j.deleted);
+    if (job) job.deleted = true;
+    else if (event?.usage) {
+      // Sent before this page loaded, so it's in the server's count instead.
+      event.usage.files = Math.max(0, event.usage.files - 1);
+      event.usage.bytes = Math.max(0, event.usage.bytes - item.size);
+    }
   }
 
   function retry(job: Job) {
@@ -460,6 +470,14 @@
   }
 
   function clearFinished() {
+    // Sent files still count toward the limits once they leave the list.
+    if (event?.usage) {
+      for (const j of jobs) {
+        if (busy(j) || !counts(j)) continue;
+        event.usage.files++;
+        event.usage.bytes += j.file.size;
+      }
+    }
     jobs = jobs.filter(busy);
     showDone = false;
     if (!jobs.length) sheetOpen = false;

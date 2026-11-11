@@ -1,5 +1,5 @@
 import type { DriveStorage } from '../../shared/types';
-import { decrypt, encrypt } from './crypto';
+import { decrypt, encrypt, fromB64 } from './crypto';
 import { HttpError, now, type Env, type OwnerRow } from './util';
 
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -62,7 +62,8 @@ export function exchangeCode(env: Env, code: string, redirectUri: string) {
 /** The id_token comes straight from Google's token endpoint over TLS, so decoding without verifying is safe here. */
 export function decodeIdToken(idToken: string): { sub: string; email: string; name: string | null } {
   const payload = idToken.split('.')[1];
-  const json = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+  // The payload is UTF-8, so names like "José" or "李雷" need decoding as such, not one byte per character.
+  const json = JSON.parse(new TextDecoder().decode(fromB64(payload)));
   return { sub: json.sub, email: json.email, name: json.name ?? null };
 }
 

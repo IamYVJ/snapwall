@@ -48,6 +48,8 @@
   let editOpen = $state(false);
   let editName = $state('');
   let editDate = $state('');
+  /** Why the edit or PIN dialog's last save failed. */
+  let dialogError = $state('');
   let approving = $state(false);
 
   let zipOpen = $state(false);
@@ -117,6 +119,7 @@
     } catch (err) {
       errorCode = err instanceof ApiError ? err.code : 'error';
       phase = 'error';
+      if (errorCode === 'event_not_found' && adminToken) saved.forget(`a/${eventId}/${adminToken}`);
     }
   }
 
@@ -263,14 +266,20 @@
   const mb = (bytes: number) =>
     bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(bytes / 1e6, bytes ? 0.1 : 0).toFixed(bytes >= 1e8 ? 0 : 1)} MB`;
 
-  async function patch(p: EventPatch, message = 'Saved') {
+  /**
+   * Saves a change. Returns why it didn't save, or null if it did. A dialog passes `quiet` to show the reason itself,
+   * since the toast sits behind an open dialog, and stays open with what was typed.
+   */
+  async function patch(p: EventPatch, message = 'Saved', quiet = false): Promise<string | null> {
     saving = true;
     try {
       event = await api.update(p);
       flash(message);
+      return null;
     } catch (err) {
-      fail(err);
+      if (!quiet) fail(err);
       event = await api.get().catch(() => event);
+      return err instanceof ApiError ? err.message : 'Something went wrong. Please try again.';
     } finally {
       saving = false;
     }
@@ -354,10 +363,16 @@
 
   async function savePin(e: SubmitEvent) {
     e.preventDefault();
-    await patch({ pin: pinInput.trim() }, 'PIN set');
+    dialogError = (await patch({ pin: pinInput.trim() }, 'PIN set', true)) ?? '';
+    if (dialogError) return;
     pinModal = false;
     pinInput = '';
   }
+
+  // A reason from last time doesn't carry over to the next time a dialog opens.
+  $effect(() => {
+    if (!editOpen && !pinModal) dialogError = '';
+  });
 
   function openEdit() {
     editName = event!.name;
@@ -370,8 +385,8 @@
     const date = editDate || null;
     const p: EventPatch = { name: editName.trim(), date };
     if (editClose !== event!.settings.expiresAt) p.settings = { expiresAt: editClose };
-    await patch(p);
-    editOpen = false;
+    dialogError = (await patch(p, 'Saved', true)) ?? '';
+    if (!dialogError) editOpen = false;
   }
 
   async function deleteEvent() {
@@ -379,6 +394,7 @@
     try {
       await api.remove(trashFolder);
       clearInterval(poll);
+      saved.remove(eventId);
       go(session.get() ? '' : 'privacy', { replace: true });
     } catch (err) {
       deleting = false;
@@ -822,8 +838,9 @@
           Uploads will {editClose <= Date.now() / 1000 ? 'close straight away (the new time has passed)' : `now close ${closeLabel(editClose)}`}.
         </p>
       {/if}
+      {#if dialogError}<p class="error-text" role="alert" style="margin: 0">{dialogError}</p>{/if}
       <div class="row">
-        <button class="btn" type="submit" disabled={saving || !editName.trim()}>Save</button>
+        <button class="btn" type="submit" disabled={saving || !editName.trim()}>{saving ? 'Saving…' : 'Save'}</button>
         <button class="btn ghost" type="button" onclick={() => (editOpen = false)}>Cancel</button>
       </div>
     </form>
@@ -833,8 +850,9 @@
     <form class="stack" onsubmit={savePin}>
       <p class="muted" style="margin: 0">4–8 digits. Guests enter it once per visit. Share it separately from the link.</p>
       <input class="input" bind:value={pinInput} inputmode="numeric" pattern="\d{'{'}4,8{'}'}" maxlength="8" placeholder="1234" />
+      {#if dialogError}<p class="error-text" role="alert" style="margin: 0">{dialogError}</p>{/if}
       <div class="row">
-        <button class="btn" type="submit" disabled={!/^\d{4,8}$/.test(pinInput)}>Save PIN</button>
+        <button class="btn" type="submit" disabled={saving || !/^\d{4,8}$/.test(pinInput)}>{saving ? 'Saving…' : 'Save PIN'}</button>
         <button class="btn ghost" type="button" onclick={() => (pinModal = false)}>Cancel</button>
       </div>
     </form>

@@ -34,15 +34,23 @@ export async function requireOwner(c: Ctx): Promise<OwnerRow> {
 
 export const auth = new Hono<AppEnv>();
 
+/**
+ * A value the web app keeps in the browser that started signing in. It is handed back with the session, and the app
+ * only takes a session that carries its own, so a link with someone else's session can't sign a person in as them.
+ */
+const NONCE = /^[A-Za-z0-9_-]{16,64}$/;
+
 auth.get('/google/start', (c) => {
   const state = randomToken(16);
-  setCookie(c, STATE_COOKIE, state, { httpOnly: true, secure: true, sameSite: 'Lax', path: '/auth', maxAge: 600 });
+  const nonce = c.req.query('n') ?? '';
+  const keep = NONCE.test(nonce) ? `${state}.${nonce}` : state;
+  setCookie(c, STATE_COOKIE, keep, { httpOnly: true, secure: true, sameSite: 'Lax', path: '/auth', maxAge: 600 });
   return c.redirect(authUrl(c.env, redirectUri(c), state, c.req.query('consent') === '1'));
 });
 
 auth.get('/google/callback', async (c) => {
   const { code, state, error } = c.req.query();
-  const expected = getCookie(c, STATE_COOKIE);
+  const [expected, nonce] = (getCookie(c, STATE_COOKIE) ?? '').split('.');
   deleteCookie(c, STATE_COOKIE, { path: '/auth' });
   if (error) return toWeb(c, `signin-error/${encodeURIComponent(error)}`);
   if (!code || !state || state !== expected) return toWeb(c, 'signin-error/state');
@@ -60,7 +68,7 @@ auth.get('/google/callback', async (c) => {
   const existing = await db.prepare('SELECT * FROM owners WHERE google_sub = ?').bind(profile.sub).first<OwnerRow>();
   if (!tok.refresh_token && !existing?.refresh_enc) {
     // Google only issues a refresh token on explicit consent; ask once more with prompt=consent.
-    return c.redirect('/auth/google/start?consent=1');
+    return c.redirect(`/auth/google/start?consent=1${nonce ? `&n=${nonce}` : ''}`);
   }
 
   const accessEnc = await encrypt(tok.access_token, c.env.TOKEN_KEY);
@@ -86,7 +94,7 @@ auth.get('/google/callback', async (c) => {
     .bind(await sha256(session), ownerId, now(), now() + SESSION_TTL)
     .run();
   // The session travels in the URL fragment, which browsers never send to any server.
-  return toWeb(c, `auth/${session}`);
+  return toWeb(c, `auth/${session}${nonce ? `/${nonce}` : ''}`);
 });
 
 auth.post('/logout', async (c) => {

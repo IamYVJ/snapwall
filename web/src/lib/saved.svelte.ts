@@ -37,6 +37,10 @@ export const saved = {
   // Untracked, so an effect that saves the open event doesn't rerun on the list it just changed.
   add: (e: Omit<SavedEvent, 'seen'>) => untrack(() => write(upsert(list, { ...e, seen: Date.now() }))),
   remove: (id: string) => write(list.filter((e) => e.id !== id)),
+  /** Drops the event saved under a link that no longer works: the event was deleted or the link replaced. */
+  forget: (path: string) => {
+    if (list.some((e) => e.path === path)) write(list.filter((e) => e.path !== path));
+  },
   /** Takes in what the installed app was started with; an existing sign-in on this side wins. */
   receive(h: Handoff) {
     write(merge(list, h.events));
