@@ -252,6 +252,9 @@
     if (!document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => undefined);
     else document.exitFullscreen?.();
   }
+
+  /** Double-click or F anywhere on the show, photo included, but not while typing or clicking in the PIN form. */
+  const onShow = (e: Event) => !(e.target as Element | null)?.closest?.('form');
 </script>
 
 <svelte:head><title>{event ? `${event.name} · Slideshow` : 'Slideshow'}</title></svelte:head>
@@ -261,8 +264,8 @@
   class:asking={askPin}
   role="button"
   tabindex="0"
-  ondblclick={(e) => e.target === e.currentTarget && fullscreen()}
-  onkeydown={(e) => e.target === e.currentTarget && e.key === 'f' && fullscreen()}
+  ondblclick={(e) => onShow(e) && fullscreen()}
+  onkeydown={(e) => onShow(e) && e.key === 'f' && fullscreen()}
 >
   {#if error}
     <p class="msg">{error}</p>

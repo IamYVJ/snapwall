@@ -160,6 +160,19 @@
     if (uploading) return hold();
   });
 
+  /**
+   * Shows the PIN screen when the event wants a PIN, or a new one because the host changed it. Checking for new photos
+   * and sending queued files stop until it's entered: each request with the old PIN counts as a wrong guess, and enough
+   * of them would lock out everyone on this network.
+   */
+  function askForPin(err: unknown): boolean {
+    if (!(err instanceof ApiError) || !['pin_required', 'pin_wrong', 'pin_locked'].includes(err.code)) return false;
+    clearInterval(poll);
+    pinError = err.code === 'pin_wrong' ? 'That PIN isn’t right.' : err.code === 'pin_locked' ? err.message : '';
+    phase = 'pin';
+    return true;
+  }
+
   async function load() {
     try {
       event = await api.event();
@@ -169,14 +182,14 @@
         items = page.items;
         next = page.next;
         guests = g;
+        clearInterval(poll);
         poll = setInterval(refresh, 20_000);
       }
+      // Files held back while the PIN was asked for carry on.
+      pump();
     } catch (err) {
       const code = err instanceof ApiError ? err.code : 'error';
-      if (code === 'pin_required' || code === 'pin_wrong' || code === 'pin_locked') {
-        pinError = code === 'pin_wrong' ? 'That PIN isn’t right.' : code === 'pin_locked' ? (err as ApiError).message : '';
-        phase = 'pin';
-      } else {
+      if (!askForPin(err)) {
         errorCode = code;
         phase = 'error';
         if (code === 'event_not_found') saved.forget(`e/${token}`);
@@ -203,6 +216,7 @@
       }
       if (event) event.count = Math.max(event.count, items.length);
     } catch (err) {
+      if (askForPin(err)) return;
       if (err instanceof ApiError && (err.code === 'event_disabled' || err.code === 'event_not_found')) {
         clearInterval(poll);
         errorCode = err.code;
@@ -353,7 +367,7 @@
   }
 
   function pump() {
-    while (active < PARALLEL) {
+    while (active < PARALLEL && phase !== 'pin') {
       const job = jobs.find((j) => j.status === 'waiting');
       if (!job) return;
       active++;
@@ -395,6 +409,11 @@
       }
     } catch (err) {
       job.paused = false;
+      // The host changed the PIN: this file waits, with what it already sent, and goes once the new one is entered.
+      if (askForPin(err)) {
+        job.status = 'waiting';
+        return;
+      }
       if (retriesItself(err) && job.reconnects < MAX_RECONNECTS) {
         job.reconnects++;
         job.status = 'reconnecting';
