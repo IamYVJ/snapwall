@@ -85,13 +85,27 @@ export async function listMedia(
     args.push(ts, ts, id);
   }
   sql += ` ORDER BY created_at DESC, id DESC LIMIT ${PAGE + 1}`;
-  const { results } = await c.env.DB.prepare(sql).bind(...args).all<UploadRow>();
+  const [{ results }, owner] = await Promise.all([
+    c.env.DB.prepare(sql).bind(...args).all<UploadRow>(),
+    c.env.DB.prepare('SELECT refresh_enc, access_enc, access_exp FROM owners WHERE id = ?')
+      .bind(event.owner_id)
+      .first<Pick<OwnerRow, 'refresh_enc' | 'access_enc' | 'access_exp'>>(),
+  ]);
   const page = results.slice(0, PAGE);
   const last = page[page.length - 1];
   return {
     items: await Promise.all(page.map((u) => toMediaItem(c, event, u, aud, settings, mine))),
     next: results.length > PAGE && last ? `${last.created_at}_${last.id}` : null,
+    driveOff: driveOff(owner),
   };
+}
+
+/**
+ * True when the host has no Google access left: nothing to renew with and nothing still valid. SnapWall clears the
+ * renewal token when Google refuses it, so this turns true after the first Drive call that finds access gone.
+ */
+export function driveOff(owner: Pick<OwnerRow, 'refresh_enc' | 'access_enc' | 'access_exp'> | null): boolean {
+  return !owner || (!owner.refresh_enc && !(owner.access_enc && owner.access_exp > now() + 60));
 }
 
 /** Guest names with upload counts, most active first. Guests only see names on visible uploads. */

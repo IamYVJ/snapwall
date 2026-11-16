@@ -21,6 +21,16 @@ test('a valid signed link reaches Drive', async () => {
   expect((await fetchMedia(url)).body.error).toBe('drive_disconnected');
 });
 
+test('the wall says when the host’s Drive is disconnected, so the page can say so instead of waiting', async () => {
+  const off = await h.seedEvent();
+  await h.seedUpload(off.id);
+  expect((await h.call(`/g/${off.guestToken}/media`)).body.driveOff).toBe(true);
+  expect((await h.call(`/events/${off.id}/media`, { headers: off.admin })).body.driveOff).toBe(true);
+
+  const on = await h.seedEvent({ drive: true });
+  expect((await h.call(`/g/${on.guestToken}/media`)).body.driveOff).toBe(false);
+});
+
 test('a tampered signature is refused', async () => {
   const { url } = await guestLink();
   url.searchParams.set('s', `${url.searchParams.get('s')!.slice(0, -2)}xx`);

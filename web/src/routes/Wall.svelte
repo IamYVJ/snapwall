@@ -75,6 +75,8 @@
   let items = $state<MediaItem[]>([]);
   let next = $state<string | null>(null);
   let loadingMore = $state(false);
+  /** The host's Google Drive is disconnected, as of the last page of the wall: nothing can be shown or sent. */
+  let driveOff = $state(false);
   let open = $state<number | null>(null);
   let guests = $state<GuestCount[]>([]);
   let by = $state<string | null>(null);
@@ -181,6 +183,7 @@
         const [page, g] = await Promise.all([api.media(), api.guests().catch(() => [])]);
         items = page.items;
         next = page.next;
+        driveOff = page.driveOff;
         guests = g;
         clearInterval(poll);
         poll = setInterval(refresh, 20_000);
@@ -203,6 +206,7 @@
       const want = by;
       const [page, g] = await Promise.all([api.media(null, want), api.guests().catch(() => guests)]);
       guests = g;
+      driveOff = page.driveOff;
       if (by !== want) return;
       const known = new Set(items.map((i) => i.id));
       const fresh = page.items.filter((i) => !known.has(i.id));
@@ -236,6 +240,7 @@
       try {
         const want = by;
         const page = await api.media(next, want);
+        driveOff = page.driveOff;
         if (by !== want) return;
         items = [...items, ...page.items.filter((i) => !items.some((x) => x.id === i.id))];
         next = page.next;
@@ -254,6 +259,7 @@
     selected = new Set();
     try {
       const page = await api.media(null, name);
+      driveOff = page.driveOff;
       if (by !== name) return;
       items = page.items;
       next = page.next;
@@ -680,11 +686,17 @@
       {#if event.settings.guestView}
         <p class="muted">{event.count ? plural(event.count, 'moment') + ' shared' : 'Be the first to share a moment.'}</p>
       {/if}
-      {#if event.settings.faceSearch && items.length && !matches}
+      {#if event.settings.faceSearch && items.length && !matches && !driveOff}
         <div><button class="btn ghost sm" onclick={() => (findOpen = true)}><Icon name="face" size={16} /> Find photos of me</button></div>
       {/if}
     </section>
 
+    {#if driveOff}
+      <p class="notice small drive-off" role="status">
+        <strong>Photos can’t be shown or added right now.</strong> The host’s Google Drive is disconnected. Everything
+        comes back as soon as they sign in to SnapWall again.
+      </p>
+    {/if}
     {#if !event.settings.uploadsOpen}
       <!-- Without the wall, the card below says it. -->
       {#if event.settings.guestView}<p class="notice muted small">Uploads are closed. You can still browse the wall.</p>{/if}
@@ -740,7 +752,7 @@
         <GuestFilter {guests} value={by} onchange={showGuest} />
       {/if}
       {#if shown.length}
-        <MediaGrid items={shown} onopen={(i) => (open = i)} {selecting} {selected} ontoggle={toggle} names />
+        <MediaGrid items={shown} onopen={(i) => (open = driveOff ? null : i)} {selecting} {selected} ontoggle={toggle} names {driveOff} />
         {#if !matches}<div bind:this={sentinel} class="sentinel">{#if loadingMore}<div class="spinner"></div>{/if}</div>{/if}
       {:else}
         <div class="empty">
@@ -887,6 +899,9 @@
 <style>
   .wall {
     padding-bottom: 140px;
+  }
+  .drive-off {
+    border-left-color: var(--danger);
   }
   .top {
     padding: 20px 0;

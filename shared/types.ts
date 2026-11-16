@@ -129,6 +129,8 @@ export type MediaFilter = 'all' | 'awaiting' | 'hidden';
 export interface MediaPage {
   items: MediaItem[];
   next: string | null;
+  /** The host's Google access is gone, so no preview or file can be fetched until they sign in to SnapWall again. */
+  driveOff: boolean;
 }
 
 export interface UploadSlot {

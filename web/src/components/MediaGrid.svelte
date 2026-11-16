@@ -12,6 +12,7 @@
     ontoggle,
     actions,
     names = false,
+    driveOff = false,
   }: {
     items: MediaItem[];
     onopen: (index: number) => void;
@@ -21,6 +22,8 @@
     actions?: Snippet<[MediaItem]>;
     /** Show each upload's guest name on its tile. */
     names?: boolean;
+    /** The host's Google Drive is disconnected: no preview can load, so none is asked for. */
+    driveOff?: boolean;
   } = $props();
 
   let failed = $state<Record<string, boolean>>({});
@@ -48,6 +51,16 @@
     delete tries[id];
     delete waits[id];
   };
+
+  // While Drive is off, previews start over, so they load afresh as soon as the host reconnects.
+  $effect(() => {
+    if (!driveOff) return;
+    timers.forEach(clearTimeout);
+    timers.clear();
+    failed = {};
+    tries = {};
+    waits = {};
+  });
 </script>
 
 <ul class="grid">
@@ -58,7 +71,12 @@
         onclick={() => (selecting ? ontoggle?.(item.id) : onopen(i))}
         aria-label={selecting ? `Select ${item.name}` : `Open ${item.name}`}
       >
-        {#if failed[item.id]}
+        {#if driveOff}
+          <span class="placeholder">
+            <Icon name={isVideo(item.mime) ? 'play' : 'image'} size={28} />
+            <span class="small">Preview unavailable</span>
+          </span>
+        {:else if failed[item.id]}
           <span class="placeholder">
             <Icon name={isVideo(item.mime) ? 'play' : 'image'} size={28} />
             <span class="small">{isVideo(item.mime) ? 'Video processing' : 'Preview unavailable'}</span>
@@ -80,7 +98,7 @@
             onerror={() => retry(item.id)}
           />
         {/if}
-        {#if isVideo(item.mime) && !failed[item.id]}
+        {#if isVideo(item.mime) && !failed[item.id] && !driveOff}
           <span class="badge"><Icon name="play" size={14} /></span>
         {/if}
         {#if names && item.uploader}

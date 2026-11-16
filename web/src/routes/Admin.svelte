@@ -48,6 +48,8 @@
   let editOpen = $state(false);
   let editName = $state('');
   let editDate = $state('');
+  /** The Google Drive is disconnected, as of the last page of media: previews can't load until you sign in again. */
+  let driveOff = $state(false);
   /** Why the edit or PIN dialog's last save failed. */
   let dialogError = $state('');
   let approving = $state(false);
@@ -114,6 +116,7 @@
       guests = g;
       items = page.items;
       next = page.next;
+      driveOff = page.driveOff;
       phase = 'ready';
       poll = setInterval(refreshMedia, 15_000);
     } catch (err) {
@@ -130,6 +133,7 @@
       const [ev, page, g] = await Promise.all([api.get(), api.media(null, filter, by), api.guests().catch(() => guests)]);
       if (!saving) event = ev;
       guests = g;
+      driveOff = page.driveOff;
       if (want.filter !== filter || want.by !== by) return;
       const known = new Set(items.map((i) => i.id));
       const fresh = page.items.filter((i) => !known.has(i.id));
@@ -671,7 +675,7 @@
       </div>
       <GuestFilter {guests} value={by} onchange={(name) => showFilter(filter, false, name)} />
       {#if items.length}
-        <MediaGrid {items} onopen={(i) => (open = i)} names>
+        <MediaGrid {items} onopen={(i) => (open = driveOff ? null : i)} names {driveOff}>
           {#snippet actions(item)}
             {#if item.awaiting}
               <button class="mini approve" disabled={approving} onclick={() => approve(item)} aria-label="Approve" title="Approve and show on the wall">
