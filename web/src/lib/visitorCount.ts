@@ -9,6 +9,9 @@ let count: string | null = null;
 let visible = false;
 
 function render() {
+  // The footer's privacy link follows the same rule: public pages only, so event pages stay clean.
+  const links = document.querySelector<HTMLElement>('.site-links');
+  if (links) links.hidden = !visible;
   const box = document.querySelector<HTMLElement>('.visitor-counter');
   const out = document.getElementById('visitor-count');
   if (!box || !out) return;

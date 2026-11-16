@@ -21,6 +21,8 @@
     <div id="app"></div>
     <!-- Outside #app so Svelte never re-renders it; App.svelte shows it on public pages only. -->
     <footer class="site-foot">
+      <!-- In the page itself, not drawn by the app, so Google's app review finds the privacy policy without running it. -->
+      <p class="site-links"><a href="privacy.html">Privacy policy</a></p>
       <p class="visitor-counter" hidden>
         <span id="visitor-count" class="visitor-count">—</span> visitors
       </p>

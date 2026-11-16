@@ -432,6 +432,17 @@ em.serif {
   text-align: center;
 }
 
+/* No `display` here either, for the same reason: event pages hide it with `hidden`. */
+.site-links {
+  margin: 0 0 6px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+.site-links a {
+  color: var(--muted);
+}
+
 .visitor-count {
   font-variant-numeric: tabular-nums;
   color: var(--muted);
